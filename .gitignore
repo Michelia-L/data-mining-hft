@@ -3,3 +3,6 @@
 *.Zone.Identifier
 *:Zone.Identifier
 *.csv
+
+__pycache__/
+*.pyc
