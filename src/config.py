@@ -8,12 +8,17 @@ import os
 # 项目根目录路径
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 数据集文件路径
+# 数据集文件路径 (优先使用高性能全量 Parquet 格式，兼容备选 CSV)
 DATASET_PATHS = {
     # CME Globex 标普500 E-mini 期货 (ESZ5) MBP-10 数据
-    "CME_ES": os.path.join(BASE_DIR, "databento_glbx.mdp3_mbp_10.csv"),
+    "CME_ES": os.path.join(BASE_DIR, "databento_glbx.mdp3_mbp_10.parquet")
+    if os.path.exists(os.path.join(BASE_DIR, "databento_glbx.mdp3_mbp_10.parquet"))
+    else os.path.join(BASE_DIR, "databento_glbx.mdp3_mbp_10.csv"),
+
     # ICE Futures Europe 布伦特原油期货 (BRN) MBP-10 数据
-    "ICE_BRENT": os.path.join(BASE_DIR, "databento_ifeu.impact_mbp_10.csv"),
+    "ICE_BRENT": os.path.join(BASE_DIR, "databento_ifeu.impact_mbp_10.parquet")
+    if os.path.exists(os.path.join(BASE_DIR, "databento_ifeu.impact_mbp_10.parquet"))
+    else os.path.join(BASE_DIR, "databento_ifeu.impact_mbp_10.csv"),
 }
 
 # 实验采样设置 (兼顾代表性、内存安全与执行速度)

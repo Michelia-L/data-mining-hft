@@ -32,7 +32,15 @@ def load_and_preprocess_ticks(file_path: str, nrows: int = SAMPLE_TICKS) -> pd.D
         'bid_px_04', 'ask_px_04', 'bid_sz_04', 'ask_sz_04'
     ]
     
-    df = pd.read_csv(file_path, nrows=nrows, usecols=usecols)
+    if file_path.endswith('.parquet'):
+        print(f"[DataLoader] 正在极速读取 Parquet 数据: {file_path} (采样前 {nrows} 行)...")
+        # Parquet 列式读取极快，支持精确列裁剪
+        df = pd.read_parquet(file_path, columns=usecols)
+        if nrows is not None and len(df) > nrows:
+            df = df.iloc[:nrows].copy()
+    else:
+        print(f"[DataLoader] 正在读取 CSV 数据: {file_path} (采样前 {nrows} 行)...")
+        df = pd.read_csv(file_path, nrows=nrows, usecols=usecols)
     
     # 过滤掉买一价或卖一价缺失、倒挂的异常事件
     valid_mask = (
