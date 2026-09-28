@@ -1,4 +1,8 @@
-"""Generate reviewable experiment tables from the same JSON used by the dashboard."""
+"""从实验 JSON 自动生成中文复现报告，保持文字表格与看板的数据来源一致。
+
+本模块不重新训练、不重新调参，只把已经保存的指标和诊断转换成 Markdown。
+方法边界是固定说明；窗口时间、收益、权重和专家匹配情况都从结果中提取，
+避免手工复制数字后忘记同步，或根据某次漂亮结果预先写死结论。"""
 import argparse
 import json
 from pathlib import Path
@@ -6,6 +10,12 @@ from src.config import BASE_DIR, SUMMARY_JSON_PATH
 
 
 def render_report(data):
+    """把 schema_version=2 的实验结果组织成报告字符串，不写文件。
+
+    先解释方法口径，再逐品种展示窗口、策略汇总、模型预测与奖励诊断，
+    最后从全部窗口统计现金专家和无法表示专家的数量。
+    金额保留两位小数、权重/间隔保留更多位只是展示格式，原始精度仍在 JSON 中。
+    lines 中的空字符串用于生成 Markdown 空行，保证标题和表格正确渲染。"""
     lines = [
         '# FMATO 因果回测与有限策略复现实验', '',
         '> 本报告由 `generate_report.py` 从实验 JSON 自动生成。旧版含前视偏差的收益结论已撤回。', '',
@@ -29,6 +39,7 @@ def render_report(data):
         '- 随机基线使用三个独立固定种子；窗口内分别重置模型与选择器。不同时间窗口可能相关，不能视为独立交易日；下表不提供虚假的置信区间或显著性结论。',
         '- 消融固定 ARS、成本、门槛和尺度归一化，只替换权重：校准权重、等权、单独 10/30/90 事件。单模型基线全部保留，并提供仅由验证段选出的最佳模型。', '',
     ]
+    # experiments 按品种组织，windows 保存各时间段，aggregate 是同名策略的跨窗汇总。
     for key, experiment in data['experiments'].items():
         lines += [f'## {key}', '', f"数据：`{experiment['source_file']}`，总行数 {experiment['source_rows']:,}。", '',
                   '| 窗口 | 原始偏移 | 测试起点 UTC | 测试终点 UTC | 测试秒数 | 不变类别占比 |',
@@ -47,6 +58,7 @@ def render_report(data):
             lines += ['', f'### 窗口 {i}：模型诊断与校准', '',
                       f"验证段选定门槛 `{w['tuning']['threshold']}`；最佳固定模型 `{w['tuning']['validation_best_model']}`；UCB 系数 `{w['tuning']['c_by_reward']}`。", '',
                       '| 奖励 | 10 / 30 / 90 权重 | 迭代数 | 间隔求解收敛 | 最终间隔 | 专家可表示 | 校准专家 |', '|---|---|---:|---|---:|---|---|']
+            # 同时展示求解收敛、最终间隔和专家可表示性，防止把数值收敛等同于成功模仿。
             for reward, item in w['rewards'].items():
                 d = item['diagnostics']
                 weights = ' / '.join(f'{v:.4f}' for v in item['weights'])
@@ -60,6 +72,7 @@ def render_report(data):
             b = w['prediction_baselines']
             lines += ['', f"零收益预测：MSE `{b['zero_prediction_mse']:.3e}`，方向准确率 **{b['zero_direction_accuracy']:.2f}%**；训练多数类基线准确率 **{b['train_majority_accuracy']:.2f}%**。方向指标仅评估已有真实标签的 {b['evaluated_rows']} 行，尾部 {b['unlabeled_tail']} 行仍参与交易回放与平仓。", '',
                       f"90 个事件对应秒数的 10%/50%/90% 分位数：`{w['horizon_90_seconds_quantiles']}`。"]
+    # 总结也由实际诊断计算；若以后增加数据或改变模型，这段结论会随结果自动更新。
     windows = [w for e in data['experiments'].values() for w in e['windows']]
     cash_experts = sum(w['rewards']['ME']['diagnostics']['policy_names'][
         w['rewards']['ME']['diagnostics']['expert_index']] == 'Baseline-Cash' for w in windows)
@@ -75,6 +88,9 @@ def render_report(data):
 
 
 def main():
+    """读取命令行指定的 JSON，校验版本后保存报告。
+
+    --input/--output 允许给快速验证另设文件，防止覆盖正式实验报告。"""
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', default=SUMMARY_JSON_PATH)
     parser.add_argument('--output', default=str(BASE_DIR / 'replication_report.md'))

@@ -34,7 +34,12 @@ class LightModelBase(ABC):
         pass
 
     def evaluate_latency(self, X_sample: np.ndarray) -> float:
-        """Warm single-event P50/P95; batch throughput is reported separately."""
+        """分别测量单条预测延迟与批量均摊耗时，单位均为微秒。
+
+        先预热 10 次，再逐条预测 200 次，保存 P50（中位数）和 P95（较慢尾部）。
+        随后一次预测整批样本并除以批量大小，得到吞吐口径的每行均摊耗时。
+        批量向量化可以摊薄函数调用开销，所以该值不能冒充在线逐条推理延迟。
+        这里只计模型 predict，不包含特征工程、模型选择、撮合或网络传输。"""
         one = X_sample[:1]
         for _ in range(10):
             self.predict(one)
@@ -80,7 +85,11 @@ class LogisticDirectionModel(LightModelBase):
         self.model = LogisticRegression(C=C, max_iter=200, random_state=42)
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        # Explicit down / flat / up classes, calibrated to empirical class returns.
+        # 先分方向，再校准幅度；输出仍是连续收益率，便于统一比较开仓阈值。
+        """将训练收益映射为跌(-1)、平(0)、涨(+1)，并计算每类的训练平均收益。
+
+        高频中平盘样本常很多，不能直接并入“跌”。若训练段只有一个类别，
+        逻辑回归无法拟合，则保存常数收益预测；整个处理都不使用测试标签。"""
         labels = np.sign(y).astype(int)
         self.class_returns = {int(c): float(y[labels == c].mean()) for c in np.unique(labels)}
         self.constant = float(y.mean()) if len(self.class_returns) == 1 else None
@@ -89,6 +98,10 @@ class LogisticDirectionModel(LightModelBase):
         self.is_trained = True
 
     def predict(self, X: np.ndarray) -> np.ndarray:
+        """用类别概率乘以训练类别平均收益，转换为与其他模型一致的收益率预测。
+
+        predict_proba 的列顺序由 model.classes_ 决定，必须按它取对应收益，
+        不能假定概率矩阵总是有三个固定位置的类别。"""
         if self.constant is not None:
             return np.full(len(X), self.constant)
         values = np.array([self.class_returns[int(c)] for c in self.model.classes_])
@@ -126,6 +139,7 @@ class HistGBDTModel(LightModelBase):
         self.model = HistGradientBoostingRegressor(
             max_iter=max_iter,
             max_depth=max_depth,
+            # 禁用模型内部自动验证划分，由外部时间切分统一管理训练与验证。
             early_stopping=False,
             random_state=42
         )
@@ -148,7 +162,7 @@ class MomentumRuleModel(LightModelBase):
         self.scale = 0.0005
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        # 仅根据样本方差估计输出尺度
+        # 仅根据训练收益的标准差估计输出尺度，不学习未来测试段的波动率。
         self.scale = float(np.std(y)) if len(y) > 0 else 0.0005
         self.is_trained = True
 
@@ -158,6 +172,7 @@ class MomentumRuleModel(LightModelBase):
         # index 6: ret_lag_5 (5-tick 动量)
         obi = X[:, 2] if X.shape[1] > 2 else np.zeros(len(X))
         mom = X[:, 6] if X.shape[1] > 6 else np.zeros(len(X))
+        # X 已按训练统计量标准化，这里的 obi/mom 是标准化数值，不是原始 OBI/收益。
         combined = 0.6 * obi + 0.4 * mom
         return np.clip(combined * self.scale, -3 * self.scale, 3 * self.scale)
 
