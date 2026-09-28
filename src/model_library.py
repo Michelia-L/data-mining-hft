@@ -34,11 +34,22 @@ class LightModelBase(ABC):
         pass
 
     def evaluate_latency(self, X_sample: np.ndarray) -> float:
-        """测算单样本推理耗时 (微秒)"""
-        start = time.perf_counter()
-        _ = self.predict(X_sample)
-        duration = time.perf_counter() - start
-        self.latency_us = (duration / len(X_sample)) * 1e6
+        """Warm single-event P50/P95; batch throughput is reported separately."""
+        one = X_sample[:1]
+        for _ in range(10):
+            self.predict(one)
+        samples = []
+        for _ in range(200):
+            start = time.perf_counter_ns()
+            self.predict(one)
+            samples.append((time.perf_counter_ns() - start) / 1000)
+        start = time.perf_counter_ns()
+        self.predict(X_sample)
+        batch_us = (time.perf_counter_ns() - start) / 1000 / len(X_sample)
+        self.latency_us = float(np.median(samples))
+        self.latency = dict(single_p50_us=self.latency_us,
+                            single_p95_us=float(np.percentile(samples, 95)),
+                            batch_us_per_row=batch_us, repeats=200)
         return self.latency_us
 
 
@@ -62,26 +73,26 @@ class RidgeModel(LightModelBase):
 class LogisticDirectionModel(LightModelBase):
     """
     2. 逻辑回归方向判别模型
-    将收益预测转化为多空分类任务，输出带有置信度偏向的期望值。
+    显式区分跌、平、涨，用训练集各类别平均收益校准期望值。
     """
     def __init__(self, C: float = 1.0):
         super().__init__("Logistic_Direction")
         self.model = LogisticRegression(C=C, max_iter=200, random_state=42)
-        self.std_scale = 1.0
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        # 将连续收益二值化为涨跌方向标签: 1 (涨) 与 0 (跌)
-        y_binary = (y > 0).astype(int)
-        self.model.fit(X, y_binary)
-        self.std_scale = float(np.std(y)) if np.std(y) > 0 else 0.001
+        # Explicit down / flat / up classes, calibrated to empirical class returns.
+        labels = np.sign(y).astype(int)
+        self.class_returns = {int(c): float(y[labels == c].mean()) for c in np.unique(labels)}
+        self.constant = float(y.mean()) if len(self.class_returns) == 1 else None
+        if self.constant is None:
+            self.model.fit(X, labels)
         self.is_trained = True
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        # 输出净胜率偏移量乘以历史收益波动尺度
-        proba = self.model.predict_proba(X)
-        prob_up = proba[:, 1]
-        # (prob_up - 0.5) 映射到期望收益幅度
-        return (prob_up - 0.5) * 2.0 * self.std_scale
+        if self.constant is not None:
+            return np.full(len(X), self.constant)
+        values = np.array([self.class_returns[int(c)] for c in self.model.classes_])
+        return self.model.predict_proba(X) @ values
 
 
 class DecisionTreeModel(LightModelBase):
@@ -115,6 +126,7 @@ class HistGBDTModel(LightModelBase):
         self.model = HistGradientBoostingRegressor(
             max_iter=max_iter,
             max_depth=max_depth,
+            early_stopping=False,
             random_state=42
         )
 
