@@ -1,0 +1,287 @@
+{
+  "experiment": "BTCUSDT 1-second FMATO capability-bounded replication",
+  "source_data": "BTCUSDT-1s-2024-03-01.part*.csv",
+  "data_semantics": "Headerless Binance-style 1-second OHLCV/trade-flow klines; no L2 order book or observed bid/ask spread.",
+  "random_seed": 42,
+  "horizons_seconds": [
+    10,
+    30,
+    90
+  ],
+  "target": "30-second forward close-to-close return",
+  "train_test_split": "chronological 70/30; scaler fit on train only",
+  "execution_cost_model": {
+    "type": "fixed assumed cost because bid/ask is unavailable",
+    "default_bps_per_side": 3,
+    "observed_spread_used": false,
+    "sensitivity_bps_per_side": [
+      0,
+      1,
+      3,
+      5,
+      10
+    ]
+  },
+  "trade_threshold": 0.00008,
+  "data_quality": {
+    "rows": 86400,
+    "start_utc": "2024-03-01 00:00:00+00:00",
+    "end_utc": "2024-03-01 23:59:59+00:00",
+    "unique_timestamps": 86400,
+    "one_second_intervals": 86399,
+    "non_one_second_intervals": 0,
+    "zero_volume_bars": 933,
+    "missing_values": 0
+  },
+  "post_feature_rows": 86280,
+  "train_rows": 60395,
+  "test_rows": 25885,
+  "features": [
+    "range_pct",
+    "candle_body",
+    "trade_imbalance",
+    "taker_buy_ratio",
+    "log_volume",
+    "ret_lag_1",
+    "ret_lag_5",
+    "ret_lag_10",
+    "ret_lag_30",
+    "vol_10",
+    "vol_30",
+    "log_num_trades",
+    "volume_change_5"
+  ],
+  "model_eval": [
+    {
+      "name": "Ridge_Linear",
+      "mse": 2.7278905993981034e-7,
+      "direction_accuracy": 0.5512458953061619,
+      "signal_rate_at_threshold": 0.1110681862082287,
+      "latency_us_per_row": 0.15536899991275277
+    },
+    {
+      "name": "Logistic_Direction",
+      "mse": 2.734462317358379e-7,
+      "direction_accuracy": 0.5498551284527718,
+      "signal_rate_at_threshold": 0.09831949005215376,
+      "latency_us_per_row": 0.3658779996840167
+    },
+    {
+      "name": "Decision_Tree",
+      "mse": 2.765396996679699e-7,
+      "direction_accuracy": 0.5452578713540661,
+      "signal_rate_at_threshold": 0.1515549546069152,
+      "latency_us_per_row": 0.3851090000352997
+    },
+    {
+      "name": "Hist_GBDT",
+      "mse": 2.752383391718554e-7,
+      "direction_accuracy": 0.5521730732084219,
+      "signal_rate_at_threshold": 0.019277573884489085,
+      "latency_us_per_row": 0.6372160000864824
+    },
+    {
+      "name": "Rule_Momentum",
+      "mse": 3.9105968704029917e-7,
+      "direction_accuracy": 0.5395789067027236,
+      "signal_rate_at_threshold": 0.8998647865559204,
+      "latency_us_per_row": 0.02608700015116483
+    }
+  ],
+  "irl_weights": {
+    "10_seconds": 0.11655333632855594,
+    "30_seconds": 0.22754157100277658,
+    "90_seconds": 0.6559050926686676
+  },
+  "strategies": [
+    {
+      "strategy": "FMATO-ME-UCBS",
+      "total_trades": 2046,
+      "win_rate": 0.0406,
+      "pl_ratio": 0.586,
+      "gross_return": 0.099127,
+      "net_return_assumed_cost": -1.128473,
+      "assumed_cost_bps_per_side": 3,
+      "total_assumed_friction": 1.2276,
+      "max_drawdown_assumed_cost": 1.092118,
+      "trade_sharpe_nonannualized": -2.0493,
+      "cost_sensitivity_net_return": {
+        "0_bps_per_side": 0.099127,
+        "1_bps_per_side": -0.310073,
+        "3_bps_per_side": -1.128473,
+        "5_bps_per_side": -1.946873,
+        "10_bps_per_side": -3.992873
+      },
+      "action_distribution": {
+        "Ridge_Linear": 0.20174452413258384,
+        "Logistic_Direction": 0.20100794727660398,
+        "Decision_Tree": 0.19813917425857724,
+        "Hist_GBDT": 0.19810040705563092,
+        "Rule_Momentum": 0.20100794727660398
+      }
+    },
+    {
+      "strategy": "FMATO-OE-UCBS",
+      "total_trades": 2101,
+      "win_rate": 0.04,
+      "pl_ratio": 0.553,
+      "gross_return": 0.083183,
+      "net_return_assumed_cost": -1.177417,
+      "assumed_cost_bps_per_side": 3,
+      "total_assumed_friction": 1.2606,
+      "max_drawdown_assumed_cost": 1.154315,
+      "trade_sharpe_nonannualized": -2.1353,
+      "cost_sensitivity_net_return": {
+        "0_bps_per_side": 0.083183,
+        "1_bps_per_side": -0.337017,
+        "3_bps_per_side": -1.177417,
+        "5_bps_per_side": -2.017817,
+        "10_bps_per_side": -4.118817
+      },
+      "action_distribution": {
+        "Ridge_Linear": 0.20182205853847646,
+        "Logistic_Direction": 0.20135685210312076,
+        "Decision_Tree": 0.20143438650901338,
+        "Hist_GBDT": 0.19860438069393294,
+        "Rule_Momentum": 0.1967823221554565
+      }
+    },
+    {
+      "strategy": "FMATO-ME-ARS",
+      "total_trades": 3071,
+      "win_rate": 0.0274,
+      "pl_ratio": 0.567,
+      "gross_return": 0.113827,
+      "net_return_assumed_cost": -1.728773,
+      "assumed_cost_bps_per_side": 3,
+      "total_assumed_friction": 1.8426,
+      "max_drawdown_assumed_cost": 1.69851,
+      "trade_sharpe_nonannualized": -2.4055,
+      "cost_sensitivity_net_return": {
+        "0_bps_per_side": 0.113827,
+        "1_bps_per_side": -0.500373,
+        "3_bps_per_side": -1.728773,
+        "5_bps_per_side": -2.957173,
+        "10_bps_per_side": -6.028173
+      },
+      "action_distribution": {
+        "Ridge_Linear": 0.04725722039154875,
+        "Logistic_Direction": 0.2529172320217096,
+        "Decision_Tree": 0.28327195192866833,
+        "Hist_GBDT": 0.11312269819732507,
+        "Rule_Momentum": 0.3034308974607482
+      }
+    },
+    {
+      "strategy": "FMATO-OE-ARS",
+      "total_trades": 578,
+      "win_rate": 0.1003,
+      "pl_ratio": 0.596,
+      "gross_return": 0.049941,
+      "net_return_assumed_cost": -0.296859,
+      "assumed_cost_bps_per_side": 3,
+      "total_assumed_friction": 0.3468,
+      "max_drawdown_assumed_cost": 0.277087,
+      "trade_sharpe_nonannualized": -1.1283,
+      "cost_sensitivity_net_return": {
+        "0_bps_per_side": 0.049941,
+        "1_bps_per_side": -0.065659,
+        "3_bps_per_side": -0.296859,
+        "5_bps_per_side": -0.528059,
+        "10_bps_per_side": -1.106059
+      },
+      "action_distribution": {
+        "Ridge_Linear": 0.09319635588292305,
+        "Logistic_Direction": 0.19244039542547006,
+        "Decision_Tree": 0.22686567164179106,
+        "Hist_GBDT": 0.4558247722426827,
+        "Rule_Momentum": 0.031672804807133165
+      }
+    },
+    {
+      "strategy": "Baseline-Single-HistGBDT",
+      "total_trades": 124,
+      "win_rate": 0.1371,
+      "pl_ratio": 0.814,
+      "gross_return": 0.009669,
+      "net_return_assumed_cost": -0.064731,
+      "assumed_cost_bps_per_side": 3,
+      "total_assumed_friction": 0.0744,
+      "max_drawdown_assumed_cost": 0.063845,
+      "trade_sharpe_nonannualized": -0.8136,
+      "cost_sensitivity_net_return": {
+        "0_bps_per_side": 0.009669,
+        "1_bps_per_side": -0.015131,
+        "3_bps_per_side": -0.064731,
+        "5_bps_per_side": -0.114331,
+        "10_bps_per_side": -0.238331
+      },
+      "action_distribution": {
+        "Ridge_Linear": 0,
+        "Logistic_Direction": 0,
+        "Decision_Tree": 0,
+        "Hist_GBDT": 1,
+        "Rule_Momentum": 0
+      }
+    },
+    {
+      "strategy": "Baseline-Static-Ensemble",
+      "total_trades": 2628,
+      "win_rate": 0.062,
+      "pl_ratio": 0.607,
+      "gross_return": 0.21777,
+      "net_return_assumed_cost": -1.35903,
+      "assumed_cost_bps_per_side": 3,
+      "total_assumed_friction": 1.5768,
+      "max_drawdown_assumed_cost": 1.327818,
+      "trade_sharpe_nonannualized": -1.7454,
+      "cost_sensitivity_net_return": {
+        "0_bps_per_side": 0.21777,
+        "1_bps_per_side": -0.30783,
+        "3_bps_per_side": -1.35903,
+        "5_bps_per_side": -2.41023,
+        "10_bps_per_side": -5.03823
+      },
+      "action_distribution": {
+        "Ridge_Linear": 1,
+        "Logistic_Direction": 0,
+        "Decision_Tree": 0,
+        "Hist_GBDT": 0,
+        "Rule_Momentum": 0
+      }
+    },
+    {
+      "strategy": "Baseline-Random",
+      "total_trades": 2306,
+      "win_rate": 0.0512,
+      "pl_ratio": 0.524,
+      "gross_return": 0.119761,
+      "net_return_assumed_cost": -1.263839,
+      "assumed_cost_bps_per_side": 3,
+      "total_assumed_friction": 1.3836,
+      "max_drawdown_assumed_cost": 1.227269,
+      "trade_sharpe_nonannualized": -1.809,
+      "cost_sensitivity_net_return": {
+        "0_bps_per_side": 0.119761,
+        "1_bps_per_side": -0.341439,
+        "3_bps_per_side": -1.263839,
+        "5_bps_per_side": -2.186239,
+        "10_bps_per_side": -4.492239
+      },
+      "action_distribution": {
+        "Ridge_Linear": 0.19887575111455708,
+        "Logistic_Direction": 0.20201589455320798,
+        "Decision_Tree": 0.19864314789687923,
+        "Hist_GBDT": 0.20166698972669123,
+        "Rule_Momentum": 0.19879821670866446
+      }
+    }
+  ],
+  "elapsed_seconds": 10.041,
+  "limitations": [
+    "No L2/MBP order book: original OBI, microprice, depth and observed spread cannot be reproduced.",
+    "Trade imbalance from taker-buy volume is a replacement feature, not the paper's order-book imbalance.",
+    "Execution uses close as the available reference price and an explicit fixed-cost scenario, not queue-aware fills.",
+    "Only one day of BTCUSDT data is included, so cross-day regime robustness and annualized risk statistics are not claimed."
+  ]
+}

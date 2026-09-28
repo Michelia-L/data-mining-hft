@@ -3,6 +3,7 @@
 *.Zone.Identifier
 *:Zone.Identifier
 *.csv
+!data/BTCUSDT-1s-2024-03-01.part*.csv
 
 __pycache__/
 *.pyc
