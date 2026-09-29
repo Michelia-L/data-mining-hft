@@ -33,9 +33,12 @@ class PaperDefinitionTests(unittest.TestCase):
         """
         frame = quotes(np.ones(230) * 100)
         learner = IRLRewardLearner(definition='paper_price_difference', deduct_cost=True)
+        # 同向信号现在会在复核点续持，因此用每 10 个事件翻转一次方向制造不同订单数。
+        signal = np.where((np.arange(230) // 10) % 2 == 0, .001, -.001)
+        predictions = np.column_stack([signal, signal])
         results = [ExecutionEngine('CME_ES', learner, holding_period=period).run_backtest(
             SingleModelSelector('test', MODELS), frame,
-            all_model_preds=np.ones((230, 2)) * .001) for period in [10, 1000]]
+            all_model_preds=predictions) for period in [10, 1000]]
         self.assertNotEqual(results[0]['matured_order_count'], results[1]['matured_order_count'])
         np.testing.assert_allclose(results[0]['order_feature_expectation'], [-.275] * 3)
         np.testing.assert_allclose(results[0]['order_feature_expectation'], results[1]['order_feature_expectation'])

@@ -108,26 +108,24 @@ class CausalityTests(unittest.TestCase):
         self.assertFalse(result['order_feature_expectation_defined'])
         self.assertEqual(result['order_feature_expectation'], [0., 0., 0.])
 
-    def test_event_oe_groups_reversal_fills_and_assigns_decision_owner(self):
-        """反转一次会平仓再开仓，但只反馈一次均值，归属触发反转的决策模型。"""
+    def test_event_oe_feedback_matches_actual_fills_and_decision_owner(self):
+        """新的复核规则不再同事件平旧开新；OE 反馈仍必须只使用实际成交并归属当前决策。"""
         selector = RandomSelector('test', MODELS, seed=7)
         selector.reward_type = 'OE'
         frame = quotes(np.linspace(100, 103, 230))
         result = replay(frame, selector)
         learner = IRLRewardLearner(scales=[.01] * 3)
-        saw_reversal = False
         mid = frame.mid_price.to_numpy()
         for event in result['reward_observations']:
             step = event['executed_step']
             fills = [f for f in result['fills'] if f['step'] == step]
             self.assertEqual(len(fills), event['fill_count'])
-            saw_reversal |= len(fills) == 2
+            self.assertLessEqual(len(fills), 1)
             vectors = [learner.features_from_prices(mid[step], mid[step + np.array(HORIZON_EVENTS)],
                                                     f['side'], f['cost_ratio']) for f in fills]
             expected = learner.score(np.mean(vectors, axis=0)) if vectors else 0.
             self.assertAlmostEqual(event['reward'], expected)
             self.assertEqual(event['owner'], result['actions'][event['origin_step']])
-        self.assertTrue(saw_reversal)
 
     def test_oe_shadow_accounts_include_unselected_models(self):
         """检查 ARS 的 OE 能获得两个独立影子模型的反馈，不只观察实际所选模型。"""
