@@ -29,32 +29,32 @@ JSON 保存数据与源码哈希、依赖实际版本、时间范围、候选分
 
 | 策略 | 总净盈亏 USD | 平均 | 最差窗口 | 最好窗口 | 平仓笔数 |
 |---|---:|---:|---:|---:|---:|
-| Variant-ME-EventUCB | -1470.00 | -490.00 | -1100.00 | -152.50 | 53 |
-| Variant-ME-CausalShadowARS | -1202.50 | -400.83 | -897.50 | -127.50 | 46 |
+| Variant-ME-EventUCB | -1442.50 | -480.83 | -1072.50 | -152.50 | 52 |
+| Variant-ME-CausalShadowARS | -1175.00 | -391.67 | -870.00 | -127.50 | 45 |
 | Variant-OE-EventUCB | -330.00 | -110.00 | -205.00 | -27.50 | 12 |
-| Variant-OE-CausalShadowARS | -1225.00 | -408.33 | -892.50 | -155.00 | 45 |
+| Variant-OE-CausalShadowARS | -1197.50 | -399.17 | -865.00 | -155.00 | 44 |
 | Baseline-Single-Ridge_Linear | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
-| Baseline-Single-Logistic_Direction | -1692.50 | -564.17 | -1345.00 | 0.00 | 62 |
+| Baseline-Single-Logistic_Direction | -1637.50 | -545.83 | -1290.00 | 0.00 | 60 |
 | Baseline-Single-Decision_Tree | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
 | Baseline-Single-Hist_GBDT | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
-| Baseline-Single-Rule_Momentum | -245.00 | -81.67 | -245.00 | 0.00 | 8 |
+| Baseline-Single-Rule_Momentum | -205.00 | -68.33 | -205.00 | 0.00 | 7 |
 | Baseline-Static-Ensemble | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
 | Baseline-Random | -787.50 | -262.50 | -510.00 | -82.50 | 30 |
-| Baseline-RoundRobin | -1002.50 | -334.17 | -685.00 | -112.50 | 36 |
+| Baseline-RoundRobin | -975.00 | -325.00 | -657.50 | -112.50 | 35 |
 | Baseline-Cash | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
 | Baseline-ValidationBest | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
 | Baseline-Random-seed-43 | -825.00 | -275.00 | -577.50 | -122.50 | 30 |
 | Baseline-Random-seed-44 | -775.00 | -258.33 | -552.50 | -110.00 | 30 |
-| Ablation-ME-CausalShadowARS-Equal | -1325.00 | -441.67 | -952.50 | -177.50 | 50 |
-| Ablation-ME-CausalShadowARS-Single-10 | -1392.50 | -464.17 | -1020.00 | -177.50 | 52 |
-| Ablation-ME-CausalShadowARS-Single-30 | -1255.00 | -418.33 | -897.50 | -177.50 | 47 |
+| Ablation-ME-CausalShadowARS-Equal | -1297.50 | -432.50 | -925.00 | -177.50 | 49 |
+| Ablation-ME-CausalShadowARS-Single-10 | -1365.00 | -455.00 | -992.50 | -177.50 | 51 |
+| Ablation-ME-CausalShadowARS-Single-30 | -1227.50 | -409.17 | -870.00 | -177.50 | 46 |
 | Ablation-ME-CausalShadowARS-Single-90 | -1050.00 | -350.00 | -745.00 | -127.50 | 40 |
-| Ablation-OE-CausalShadowARS-Equal | -1157.50 | -385.83 | -852.50 | -127.50 | 43 |
+| Ablation-OE-CausalShadowARS-Equal | -1130.00 | -376.67 | -825.00 | -127.50 | 42 |
 | Ablation-OE-CausalShadowARS-Single-10 | -922.50 | -307.50 | -617.50 | -127.50 | 34 |
 | Ablation-OE-CausalShadowARS-Single-30 | -1032.50 | -344.17 | -647.50 | -177.50 | 38 |
-| Ablation-OE-CausalShadowARS-Single-90 | -1225.00 | -408.33 | -892.50 | -155.00 | 45 |
-| Sensitivity-ME-SignedBox | -1187.50 | -395.83 | -897.50 | -112.50 | 45 |
-| Sensitivity-OE-SignedBox | -1170.00 | -390.00 | -852.50 | -140.00 | 43 |
+| Ablation-OE-CausalShadowARS-Single-90 | -1197.50 | -399.17 | -865.00 | -155.00 | 44 |
+| Sensitivity-ME-SignedBox | -1160.00 | -386.67 | -870.00 | -112.50 | 44 |
+| Sensitivity-OE-SignedBox | -1142.50 | -380.83 | -825.00 | -140.00 | 42 |
 | Sensitivity-NetOE-FixedWeights | -510.00 | -170.00 | -220.00 | -112.50 | 19 |
 
 ### 窗口 1
@@ -76,11 +76,11 @@ UCB-ME：并列最佳 `[0.01, 0.1, 0.8]`，按预先声明顺序选 `0.01`；UCB
 
 | 模型 | 原始符号准确率 | 门槛三类准确率 | 有效信号准确率 | 信号覆盖率 | 分类 argmax 准确率 | 单条 P50 / P95 μs |
 |---|---:|---:|---:|---:|---:|---|
-| Ridge_Linear | 34.35% | 53.46% | N/A | 0.00% | N/A | 43.29 / 114.62 |
-| Logistic_Direction | 34.26% | 53.46% | N/A | 0.00% | 56.35% | 64.03 / 253.02 |
-| Decision_Tree | 33.99% | 53.46% | N/A | 0.00% | N/A | 47.39 / 93.07 |
-| Hist_GBDT | 34.69% | 53.46% | N/A | 0.00% | N/A | 162.05 / 300.93 |
-| Rule_Momentum | 31.85% | 53.38% | 21.88% | 0.27% | N/A | 3.35 / 3.92 |
+| Ridge_Linear | 34.35% | 53.46% | N/A | 0.00% | N/A | 41.48 / 47.05 |
+| Logistic_Direction | 34.26% | 53.46% | N/A | 0.00% | 56.35% | 59.95 / 85.02 |
+| Decision_Tree | 33.99% | 53.46% | N/A | 0.00% | N/A | 47.39 / 55.10 |
+| Hist_GBDT | 34.69% | 53.46% | N/A | 0.00% | N/A | 181.17 / 188.44 |
+| Rule_Momentum | 31.85% | 53.38% | 21.88% | 0.27% | N/A | 4.17 / 4.48 |
 
 零信号准确率 53.46%；训练多数类准确率 53.46%。原始符号、阈值后信号、分类 argmax 是不同指标，不可混读；未标注尾部 30 行仍参与执行。
 
@@ -107,11 +107,11 @@ UCB-ME：选中 `0.01`；UCB-OE：选中 `0.01`。
 
 | 模型 | 原始符号准确率 | 门槛三类准确率 | 有效信号准确率 | 信号覆盖率 | 分类 argmax 准确率 | 单条 P50 / P95 μs |
 |---|---:|---:|---:|---:|---:|---|
-| Ridge_Linear | 23.16% | 75.45% | N/A | 0.00% | N/A | 42.59 / 73.25 |
-| Logistic_Direction | 22.73% | 75.90% | 54.19% | 1.50% | 75.75% | 60.23 / 96.38 |
-| Decision_Tree | 21.53% | 75.45% | N/A | 0.00% | N/A | 49.08 / 79.22 |
-| Hist_GBDT | 22.74% | 75.45% | N/A | 0.00% | N/A | 170.31 / 445.12 |
-| Rule_Momentum | 21.47% | 75.45% | N/A | 0.00% | N/A | 3.27 / 3.56 |
+| Ridge_Linear | 23.16% | 75.45% | N/A | 0.00% | N/A | 41.48 / 46.54 |
+| Logistic_Direction | 22.73% | 75.90% | 54.19% | 1.50% | 75.75% | 59.41 / 67.05 |
+| Decision_Tree | 21.53% | 75.45% | N/A | 0.00% | N/A | 46.61 / 54.10 |
+| Hist_GBDT | 22.74% | 75.45% | N/A | 0.00% | N/A | 185.17 / 194.40 |
+| Rule_Momentum | 21.47% | 75.45% | N/A | 0.00% | N/A | 4.36 / 4.49 |
 
 零信号准确率 75.45%；训练多数类准确率 75.45%。原始符号、阈值后信号、分类 argmax 是不同指标，不可混读；未标注尾部 30 行仍参与执行。
 
@@ -138,11 +138,11 @@ UCB-ME：选中 `0.01`；UCB-OE：选中 `0.01`。
 
 | 模型 | 原始符号准确率 | 门槛三类准确率 | 有效信号准确率 | 信号覆盖率 | 分类 argmax 准确率 | 单条 P50 / P95 μs |
 |---|---:|---:|---:|---:|---:|---|
-| Ridge_Linear | 16.96% | 82.34% | N/A | 0.00% | N/A | 39.86 / 58.14 |
-| Logistic_Direction | 17.23% | 82.52% | 83.33% | 0.25% | 84.82% | 60.49 / 120.72 |
-| Decision_Tree | 16.77% | 82.34% | N/A | 0.00% | N/A | 48.06 / 67.73 |
-| Hist_GBDT | 17.18% | 82.34% | N/A | 0.00% | N/A | 159.24 / 350.38 |
-| Rule_Momentum | 16.24% | 82.34% | N/A | 0.00% | N/A | 3.07 / 3.36 |
+| Ridge_Linear | 16.96% | 82.34% | N/A | 0.00% | N/A | 42.41 / 49.12 |
+| Logistic_Direction | 17.23% | 82.52% | 83.33% | 0.25% | 84.82% | 59.99 / 67.34 |
+| Decision_Tree | 16.77% | 82.34% | N/A | 0.00% | N/A | 48.40 / 52.37 |
+| Hist_GBDT | 17.18% | 82.34% | N/A | 0.00% | N/A | 184.99 / 195.82 |
+| Rule_Momentum | 16.24% | 82.34% | N/A | 0.00% | N/A | 4.26 / 4.46 |
 
 零信号准确率 82.34%；训练多数类准确率 82.34%。原始符号、阈值后信号、分类 argmax 是不同指标，不可混读；未标注尾部 30 行仍参与执行。
 
@@ -155,33 +155,33 @@ UCB-ME：选中 `0.01`；UCB-OE：选中 `0.01`。
 
 | 策略 | 总净盈亏 USD | 平均 | 最差窗口 | 最好窗口 | 平仓笔数 |
 |---|---:|---:|---:|---:|---:|
-| Variant-ME-EventUCB | -2647.00 | -882.33 | -2387.00 | -23.00 | 109 |
-| Variant-ME-CausalShadowARS | -4544.00 | -1514.67 | -4271.00 | -23.00 | 178 |
-| Variant-OE-EventUCB | -7485.00 | -2495.00 | -7245.00 | -23.00 | 305 |
-| Variant-OE-CausalShadowARS | -3823.00 | -1274.33 | -3573.00 | -23.00 | 151 |
-| Baseline-Single-Ridge_Linear | -128.00 | -42.67 | -79.00 | 0.00 | 6 |
+| Variant-ME-EventUCB | -4175.00 | -1391.67 | -4004.00 | -23.00 | 155 |
+| Variant-ME-CausalShadowARS | -1907.00 | -635.67 | -1703.00 | -23.00 | 69 |
+| Variant-OE-EventUCB | -3118.00 | -1039.33 | -2990.00 | -23.00 | 116 |
+| Variant-OE-CausalShadowARS | -2169.00 | -723.00 | -1965.00 | -23.00 | 73 |
+| Baseline-Single-Ridge_Linear | -572.00 | -190.67 | -516.00 | 0.00 | 14 |
 | Baseline-Single-Logistic_Direction | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
-| Baseline-Single-Decision_Tree | -7914.00 | -2638.00 | -7914.00 | 0.00 | 318 |
-| Baseline-Single-Hist_GBDT | -7434.00 | -2478.00 | -7197.00 | -46.00 | 288 |
-| Baseline-Single-Rule_Momentum | -372.00 | -124.00 | -372.00 | 0.00 | 14 |
-| Baseline-Static-Ensemble | -7084.00 | -2361.33 | -7084.00 | 0.00 | 278 |
-| Baseline-Random | -7494.00 | -2498.00 | -7349.00 | -23.00 | 298 |
-| Baseline-RoundRobin | -7718.00 | -2572.67 | -7458.00 | -23.00 | 316 |
+| Baseline-Single-Decision_Tree | -3096.00 | -1032.00 | -3096.00 | 0.00 | 102 |
+| Baseline-Single-Hist_GBDT | -3321.00 | -1107.00 | -3130.00 | -46.00 | 117 |
+| Baseline-Single-Rule_Momentum | -593.00 | -197.67 | -396.00 | 0.00 | 21 |
+| Baseline-Static-Ensemble | -2863.00 | -954.33 | -2863.00 | 0.00 | 101 |
+| Baseline-Random | -5630.00 | -1876.67 | -5508.00 | -23.00 | 220 |
+| Baseline-RoundRobin | -2756.00 | -918.67 | -2585.00 | -23.00 | 102 |
 | Baseline-Cash | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
-| Baseline-ValidationBest | -49.00 | -16.33 | -49.00 | 0.00 | 3 |
-| Baseline-Random-seed-43 | -7318.00 | -2439.33 | -7147.00 | 0.00 | 296 |
-| Baseline-Random-seed-44 | -7449.00 | -2483.00 | -7219.00 | -46.00 | 303 |
-| Ablation-ME-CausalShadowARS-Equal | -4414.00 | -1471.33 | -4141.00 | -23.00 | 178 |
-| Ablation-ME-CausalShadowARS-Single-10 | -3594.00 | -1198.00 | -3321.00 | -23.00 | 148 |
-| Ablation-ME-CausalShadowARS-Single-30 | -4220.00 | -1406.67 | -3970.00 | -23.00 | 170 |
-| Ablation-ME-CausalShadowARS-Single-90 | -4544.00 | -1514.67 | -4271.00 | -23.00 | 178 |
-| Ablation-OE-CausalShadowARS-Equal | -4753.00 | -1584.33 | -4503.00 | -23.00 | 191 |
-| Ablation-OE-CausalShadowARS-Single-10 | -3369.00 | -1123.00 | -3119.00 | -23.00 | 133 |
-| Ablation-OE-CausalShadowARS-Single-30 | -3823.00 | -1274.33 | -3573.00 | -23.00 | 151 |
-| Ablation-OE-CausalShadowARS-Single-90 | -4290.00 | -1430.00 | -3994.00 | -23.00 | 170 |
-| Sensitivity-ME-SignedBox | -4424.00 | -1474.67 | -4151.00 | -23.00 | 178 |
-| Sensitivity-OE-SignedBox | -5119.00 | -1706.33 | -4823.00 | -23.00 | 203 |
-| Sensitivity-NetOE-FixedWeights | -345.00 | -115.00 | -227.00 | -23.00 | 15 |
+| Baseline-ValidationBest | 0.00 | 0.00 | 0.00 | 0.00 | 0 |
+| Baseline-Random-seed-43 | -5659.00 | -1886.33 | -5557.00 | 0.00 | 223 |
+| Baseline-Random-seed-44 | -5954.00 | -1984.67 | -5724.00 | -46.00 | 228 |
+| Ablation-ME-CausalShadowARS-Equal | -1887.00 | -629.00 | -1683.00 | -23.00 | 69 |
+| Ablation-ME-CausalShadowARS-Single-10 | -2021.00 | -673.67 | -1817.00 | -23.00 | 67 |
+| Ablation-ME-CausalShadowARS-Single-30 | -2206.00 | -735.33 | -2025.00 | -23.00 | 72 |
+| Ablation-ME-CausalShadowARS-Single-90 | -1907.00 | -635.67 | -1703.00 | -23.00 | 69 |
+| Ablation-OE-CausalShadowARS-Equal | -2162.00 | -720.67 | -1958.00 | -23.00 | 84 |
+| Ablation-OE-CausalShadowARS-Single-10 | -1965.00 | -655.00 | -1761.00 | -23.00 | 65 |
+| Ablation-OE-CausalShadowARS-Single-30 | -2169.00 | -723.00 | -1965.00 | -23.00 | 73 |
+| Ablation-OE-CausalShadowARS-Single-90 | -2719.00 | -906.33 | -2515.00 | -23.00 | 93 |
+| Sensitivity-ME-SignedBox | -1943.00 | -647.67 | -1739.00 | -23.00 | 71 |
+| Sensitivity-OE-SignedBox | -2243.00 | -747.67 | -2039.00 | -23.00 | 81 |
+| Sensitivity-NetOE-FixedWeights | -753.00 | -251.00 | -572.00 | -23.00 | 21 |
 
 ### 窗口 1
 
@@ -202,11 +202,11 @@ UCB-ME：选中 `0.01`；UCB-OE：并列最佳 `[0.1, 0.8]`，按预先声明顺
 
 | 模型 | 原始符号准确率 | 门槛三类准确率 | 有效信号准确率 | 信号覆盖率 | 分类 argmax 准确率 | 单条 P50 / P95 μs |
 |---|---:|---:|---:|---:|---:|---|
-| Ridge_Linear | 33.79% | 52.78% | N/A | 0.00% | N/A | 40.04 / 66.05 |
-| Logistic_Direction | 33.79% | 52.78% | N/A | 0.00% | 51.81% | 61.07 / 174.26 |
-| Decision_Tree | 35.29% | 52.78% | N/A | 0.00% | N/A | 48.65 / 148.01 |
-| Hist_GBDT | 32.42% | 52.83% | 100.00% | 0.05% | N/A | 169.48 / 369.73 |
-| Rule_Momentum | 34.12% | 52.78% | N/A | 0.00% | N/A | 3.16 / 3.56 |
+| Ridge_Linear | 33.79% | 52.78% | N/A | 0.00% | N/A | 42.57 / 48.37 |
+| Logistic_Direction | 33.79% | 52.78% | N/A | 0.00% | 51.81% | 60.82 / 68.23 |
+| Decision_Tree | 35.29% | 52.78% | N/A | 0.00% | N/A | 45.56 / 50.73 |
+| Hist_GBDT | 32.42% | 52.83% | 100.00% | 0.05% | N/A | 186.67 / 202.68 |
+| Rule_Momentum | 34.12% | 52.78% | N/A | 0.00% | N/A | 4.51 / 4.64 |
 
 零信号准确率 52.78%；训练多数类准确率 52.78%。原始符号、阈值后信号、分类 argmax 是不同指标，不可混读；未标注尾部 30 行仍参与执行。
 
@@ -229,52 +229,52 @@ UCB-ME：选中 `0.8`；UCB-OE：并列最佳 `[0.01, 0.1, 0.8]`，按预先声�
 | ME / simplex | 0.0000 / 0.0000 / 1.0000 | True | False | -0.022500 |
 | OE / simplex | 1.0000 / 0.0000 / 0.0000 | True | True | -0.000000 |
 | ME / signed_box | -1.0000 / 1.0000 / 1.0000 | True | False | -0.015000 |
-| OE / signed_box | 0.5000 / -0.5000 / 1.0000 | True | True | -0.000000 |
+| OE / signed_box | 1.0000 / -0.0000 / -0.0000 | True | True | -0.000000 |
 
 | 模型 | 原始符号准确率 | 门槛三类准确率 | 有效信号准确率 | 信号覆盖率 | 分类 argmax 准确率 | 单条 P50 / P95 μs |
 |---|---:|---:|---:|---:|---:|---|
-| Ridge_Linear | 23.14% | 70.70% | 100.00% | 0.03% | N/A | 39.74 / 52.36 |
-| Logistic_Direction | 23.04% | 70.67% | N/A | 0.00% | 71.03% | 60.80 / 131.04 |
-| Decision_Tree | 22.25% | 70.67% | N/A | 0.00% | N/A | 47.86 / 127.73 |
-| Hist_GBDT | 23.24% | 70.66% | 47.62% | 0.18% | N/A | 165.65 / 367.09 |
-| Rule_Momentum | 22.23% | 70.63% | 15.00% | 0.17% | N/A | 3.42 / 4.20 |
+| Ridge_Linear | 23.14% | 70.70% | 100.00% | 0.03% | N/A | 41.12 / 44.21 |
+| Logistic_Direction | 23.04% | 70.67% | N/A | 0.00% | 71.03% | 59.44 / 65.71 |
+| Decision_Tree | 22.25% | 70.67% | N/A | 0.00% | N/A | 45.53 / 52.76 |
+| Hist_GBDT | 23.24% | 70.66% | 47.62% | 0.18% | N/A | 180.14 / 190.18 |
+| Rule_Momentum | 22.23% | 70.63% | 15.00% | 0.17% | N/A | 4.35 / 4.49 |
 
 零信号准确率 70.67%；训练多数类准确率 70.67%。原始符号、阈值后信号、分类 argmax 是不同指标，不可混读；未标注尾部 30 行仍参与执行。
 
 90 事件对应秒数分位数：`{'0.1': 0.0211009952, '0.5': 0.6737915005, '0.9': 2.4399680977}`。
 
-校准订单数/均值是否定义：Baseline-Single-Ridge_Linear：10/True；Baseline-Single-Logistic_Direction：0/False；Baseline-Single-Decision_Tree：2/True；Baseline-Single-Hist_GBDT：6/True；Baseline-Single-Rule_Momentum：12/True；Baseline-Static-Ensemble：0/False；Baseline-Cash：0/False。
+校准订单数/均值是否定义：Baseline-Single-Ridge_Linear：2/True；Baseline-Single-Logistic_Direction：0/False；Baseline-Single-Decision_Tree：2/True；Baseline-Single-Hist_GBDT：2/True；Baseline-Single-Rule_Momentum：8/True；Baseline-Static-Ensemble：0/False；Baseline-Cash：0/False。
 
 ### 窗口 3
 
 测试 2025-06-09 20:31:36.437188002+00:00 → 2025-06-09 22:00:00.245000+00:00，5303.81 秒；奖励模式 `paper_price_difference`。
 
-门槛：选中 `0.00024`。固定模型：并列最佳 `['Ridge_Linear', 'Logistic_Direction', 'Rule_Momentum']`，按预先声明顺序选 `Ridge_Linear`。
+门槛：选中 `0.00012`。固定模型：选中 `Logistic_Direction`。
 
-校准专家：并列最佳 `['Baseline-Single-Logistic_Direction', 'Baseline-Single-Rule_Momentum', 'Baseline-Cash']`，按预先声明顺序选 `Baseline-Single-Logistic_Direction`。
+校准专家：并列最佳 `['Baseline-Single-Logistic_Direction', 'Baseline-Cash']`，按预先声明顺序选 `Baseline-Single-Logistic_Direction`。
 
-UCB-ME：选中 `0.01`；UCB-OE：选中 `0.01`。
+UCB-ME：选中 `0.8`；UCB-OE：选中 `0.8`。
 
 | 奖励 / 权重约束 | 10 / 30 / 90 事件权重 | 收敛 | 专家可表示 | 最终间隔 |
 |---|---|---|---|---:|
-| ME / simplex | 0.0000 / 0.0000 / 1.0000 | True | False | -0.032500 |
-| OE / simplex | 0.0000 / 1.0000 / 0.0000 | True | False | -0.000085 |
-| ME / signed_box | -1.0000 / 1.0000 / 1.0000 | True | False | -0.032500 |
-| OE / signed_box | -0.6894 / 1.0000 / 0.6894 | True | False | -0.000085 |
+| ME / simplex | 0.0000 / 0.0000 / 1.0000 | True | False | -0.023333 |
+| OE / simplex | 0.0000 / 1.0000 / 0.0000 | True | False | -0.000274 |
+| ME / signed_box | -1.0000 / 1.0000 / 1.0000 | True | False | -0.023333 |
+| OE / signed_box | 0.4572 / 1.0000 / -0.4572 | True | False | -0.000274 |
 
 | 模型 | 原始符号准确率 | 门槛三类准确率 | 有效信号准确率 | 信号覆盖率 | 分类 argmax 准确率 | 单条 P50 / P95 μs |
 |---|---:|---:|---:|---:|---:|---|
-| Ridge_Linear | 28.76% | 60.30% | 100.00% | 0.05% | N/A | 41.84 / 121.95 |
-| Logistic_Direction | 29.09% | 60.25% | N/A | 0.00% | 60.75% | 63.56 / 109.75 |
-| Decision_Tree | 22.05% | 26.07% | 13.97% | 60.95% | N/A | 48.58 / 105.99 |
-| Hist_GBDT | 22.50% | 29.29% | 10.32% | 50.94% | N/A | 172.81 / 347.96 |
-| Rule_Momentum | 27.49% | 60.25% | N/A | 0.00% | N/A | 3.02 / 3.24 |
+| Ridge_Linear | 28.76% | 60.44% | 80.56% | 0.30% | N/A | 41.99 / 51.78 |
+| Logistic_Direction | 29.09% | 60.25% | N/A | 0.00% | 60.75% | 59.86 / 75.26 |
+| Decision_Tree | 22.05% | 26.17% | 14.18% | 61.16% | N/A | 47.11 / 66.51 |
+| Hist_GBDT | 22.50% | 28.22% | 12.33% | 55.18% | N/A | 182.09 / 200.85 |
+| Rule_Momentum | 27.49% | 60.36% | 30.51% | 0.49% | N/A | 4.24 / 4.37 |
 
 零信号准确率 60.25%；训练多数类准确率 60.25%。原始符号、阈值后信号、分类 argmax 是不同指标，不可混读；未标注尾部 30 行仍参与执行。
 
 90 事件对应秒数分位数：`{'0.1': 0.035222500000000004, '0.5': 5.053657501, '0.9': 23.3169947982}`。
 
-校准订单数/均值是否定义：Baseline-Single-Ridge_Linear：4/True；Baseline-Single-Logistic_Direction：0/False；Baseline-Single-Decision_Tree：235/True；Baseline-Single-Hist_GBDT：204/True；Baseline-Single-Rule_Momentum：0/False；Baseline-Static-Ensemble：204/True；Baseline-Cash：0/False。
+校准订单数/均值是否定义：Baseline-Single-Ridge_Linear：4/True；Baseline-Single-Logistic_Direction：0/False；Baseline-Single-Decision_Tree：73/True；Baseline-Single-Hist_GBDT：68/True；Baseline-Single-Rule_Momentum：12/True；Baseline-Static-Ensemble：73/True；Baseline-Cash：0/False。
 
 ## 解释限制与后续工作
 
