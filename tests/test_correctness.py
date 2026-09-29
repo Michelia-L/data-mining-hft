@@ -12,12 +12,12 @@ import unittest
 
 import numpy as np
 import pandas as pd
-from src.config import HORIZONS
-from src.data_loader import extract_microstructure_features, prepare_train_test_split, load_and_preprocess_ticks
+from src.config import HORIZON_EVENTS
+from src.data_loader import extract_microstructure_features, prepare_train_test_split, load_and_preprocess_events
 from src.execution_engine import ExecutionEngine
 from src.irl_reward import IRLRewardLearner
 from src.model_library import LogisticDirectionModel
-from src.model_selector import (ARSSelector, UCBSelector, SingleModelSelector,
+from src.model_selector import (CausalShadowARSSelector, CausalEventUCBSelector, SingleModelSelector,
                                 EnsembleSelector, RandomSelector)
 
 MODELS = [SimpleNamespace(name='long'), SimpleNamespace(name='short')]
@@ -54,7 +54,7 @@ class CausalityTests(unittest.TestCase):
     """因果性：更晚价格和离线未来标签不能改变此前已作出的决策及成交。"""
     def test_future_prices_cannot_change_past_actions_or_fills(self):
         """保持前 110 步相同，仅令之后价格向相反方向变化；四种选择组合的历史必须一致。"""
-        for cls in (ARSSelector, UCBSelector):
+        for cls in (CausalShadowARSSelector, CausalEventUCBSelector):
             for reward in ('ME', 'OE'):
                 with self.subTest(selector=cls.__name__, reward=reward):
                     left = quotes(np.r_[np.ones(110) * 100, np.ones(130) * 102])
@@ -68,35 +68,70 @@ class CausalityTests(unittest.TestCase):
     def test_future_label_columns_are_never_read(self):
         """给行情附加全为无穷大的未来标签；若引擎只读实时行情，两次输出仍应完全一致。"""
         frame = quotes(np.linspace(100, 101, 210))
-        a = replay(frame, ARSSelector('test', MODELS))
-        for h in HORIZONS:
+        a = replay(frame, CausalShadowARSSelector('test', MODELS))
+        for h in HORIZON_EVENTS:
             frame[f'future_ret_{h}'] = np.inf
-        b = replay(frame, ARSSelector('test', MODELS))
+        b = replay(frame, CausalShadowARSSelector('test', MODELS))
         self.assertEqual(a, b)
 
     def test_feedback_is_delayed_and_owned_by_originating_action(self):
         """ME 反馈必须恰好延迟 90 步，并归属产生信号时选中的模型。"""
-        result = replay(quotes(np.linspace(100, 101, 230)), UCBSelector('test', MODELS))
+        result = replay(quotes(np.linspace(100, 101, 230)), CausalEventUCBSelector('test', MODELS))
         self.assertTrue(result['reward_observations'])
         for event in result['reward_observations']:
             self.assertEqual(event['observed_step'], event['origin_step'] + 90)
             self.assertEqual(event['owner'], result['actions'][event['origin_step']])
 
-    def test_oe_feedback_is_only_created_by_actual_fills(self):
-        """让两个模型都持续看多且不超时，只有首笔开仓能在窗口内产生已成熟 OE 反馈。"""
-        selector = UCBSelector('test', MODELS, 'OE')
+    def test_oe_event_feedback_includes_no_fill_decisions(self):
+        """每个成熟决策恰好一条观测：成交均值或无成交零值，计数不能混用。"""
+        selector = CausalEventUCBSelector('test', MODELS, 'OE')
         result = replay(quotes(np.ones(230) * 100), selector,
                         preds=np.ones((230, 2)) * .001, holding_period=1000)
-        pairs = {(f['step'], f['owner']) for f in result['fills']}
-        # 期末退出虽真实成交，但其后没有 90 步行情，因此不能伪造第二条成熟反馈。
-        self.assertEqual(len(result['reward_observations']), 1)
+        observations = result['reward_observations']
+        self.assertEqual(len(observations), 230 - 1 - 90)
+        self.assertEqual(sum(o['fill_count'] for o in observations), 1)
+        self.assertEqual(int(selector.feedback_counts.sum()), len(observations))
+        for event in observations:
+            self.assertEqual(event['observed_step'], event['origin_step'] + 91)
+            self.assertEqual(event['owner'], result['actions'][event['origin_step']])
+            if not event['fill_count']:
+                self.assertEqual(event['reward'], 0.)
+
+    def test_no_trade_model_receives_zero_ucb_observations(self):
+        """始终不下单的模型仍会得到到期零值，而不是永远没有反馈却不断增加探索数。"""
+        selector = CausalEventUCBSelector('test', MODELS, 'OE')
+        result = replay(quotes(np.ones(230) * 100), selector, preds=np.zeros((230, 2)))
+        self.assertEqual(result['total_fills'], 0)
+        self.assertTrue((selector.feedback_counts > 0).all())
+        self.assertEqual(selector.feedback_counts.sum(), 139)
+        np.testing.assert_array_equal(selector.sum_rewards, [0, 0])
+        self.assertFalse(result['order_feature_expectation_defined'])
+        self.assertEqual(result['order_feature_expectation'], [0., 0., 0.])
+
+    def test_event_oe_groups_reversal_fills_and_assigns_decision_owner(self):
+        """反转一次会平仓再开仓，但只反馈一次均值，归属触发反转的决策模型。"""
+        selector = RandomSelector('test', MODELS, seed=7)
+        selector.reward_type = 'OE'
+        frame = quotes(np.linspace(100, 103, 230))
+        result = replay(frame, selector)
+        learner = IRLRewardLearner(scales=[.01] * 3)
+        saw_reversal = False
+        mid = frame.mid_price.to_numpy()
         for event in result['reward_observations']:
-            self.assertIn((event['origin_step'], event['owner']), pairs)
-            self.assertEqual(event['observed_step'], event['origin_step'] + 90)
+            step = event['executed_step']
+            fills = [f for f in result['fills'] if f['step'] == step]
+            self.assertEqual(len(fills), event['fill_count'])
+            saw_reversal |= len(fills) == 2
+            vectors = [learner.features_from_prices(mid[step], mid[step + np.array(HORIZON_EVENTS)],
+                                                    f['side'], f['cost_ratio']) for f in fills]
+            expected = learner.score(np.mean(vectors, axis=0)) if vectors else 0.
+            self.assertAlmostEqual(event['reward'], expected)
+            self.assertEqual(event['owner'], result['actions'][event['origin_step']])
+        self.assertTrue(saw_reversal)
 
     def test_oe_shadow_accounts_include_unselected_models(self):
         """检查 ARS 的 OE 能获得两个独立影子模型的反馈，不只观察实际所选模型。"""
-        result = replay(quotes(np.linspace(100, 102, 230)), ARSSelector('test', MODELS, 'OE'))
+        result = replay(quotes(np.linspace(100, 102, 230)), CausalShadowARSSelector('test', MODELS, 'OE'))
         self.assertEqual({o['owner'] for o in result['reward_observations']}, {0, 1})
 
     def test_next_event_execution_uses_later_quote(self):
@@ -194,33 +229,33 @@ class DataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'quotes.parquet'
             raw.to_parquet(path)
-            result = load_and_preprocess_ticks(str(path), 10)
+            result = load_and_preprocess_events(str(path), 10)
             self.assertEqual(result.sequence.tolist(), list(range(10)))
             raw.loc[0, 'instrument_id'] = 2
             raw.to_parquet(path)
             with self.assertRaises(ValueError):
-                load_and_preprocess_ticks(str(path), 10)
+                load_and_preprocess_events(str(path), 10)
 
     def test_loader_bounded_offset_and_empty_window(self):
         """检查原始行偏移只取请求范围，超出文件尾部时明确报错，而不是返回伪造空实验。"""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'quotes.parquet'
             quotes(np.ones(20) * 100).to_parquet(path)
-            self.assertEqual(load_and_preprocess_ticks(str(path), 5, 10).sequence.tolist(), list(range(10, 15)))
+            self.assertEqual(load_and_preprocess_events(str(path), 5, 10).sequence.tolist(), list(range(10, 15)))
             with self.assertRaises(ValueError):
-                load_and_preprocess_ticks(str(path), 5, 30)
+                load_and_preprocess_events(str(path), 5, 30)
 
 
 class LearningTests(unittest.TestCase):
     """选择与奖励学习：检查已知正确的简单情形及容易混淆的边界条件。"""
     def test_delayed_ucb_cold_start_does_not_stick_to_first_arm(self):
         """不提供任何反馈时，UCB 仍应按已选择计数探索两个模型，不被延迟卡在第一臂。"""
-        selector = UCBSelector('ucb', MODELS)
+        selector = CausalEventUCBSelector('ucb', MODELS)
         self.assertEqual([selector.select_model(t) for t in range(4)], [0, 1, 0, 1])
 
     def test_scaled_ucb_learns_better_arm(self):
         """持续给一个模型正奖励、另一个负奖励，验证探索项不会压过已知明显的收益差。"""
-        selector = UCBSelector('ucb', MODELS, c=.1)
+        selector = CausalEventUCBSelector('ucb', MODELS, c=.1)
         for t in range(300):
             arm = selector.select_model(t)
             selector.observe(arm, .8 if arm == 1 else -.8, t)
@@ -228,7 +263,7 @@ class LearningTests(unittest.TestCase):
 
     def test_ars_expires_stale_observations_by_event_time(self):
         """停止新反馈后继续推进事件步，旧奖励也必须按时间过期，不能永久保留。"""
-        selector = ARSSelector('ars', MODELS, window_size=3)
+        selector = CausalShadowARSSelector('ars', MODELS, window_events=3)
         selector.observe(1, .9, 0)
         self.assertEqual(selector.select_model(1), 1)
         selector.select_model(4)
@@ -253,7 +288,7 @@ class LearningTests(unittest.TestCase):
     def test_reward_scale_fit_is_training_only_and_bounded(self):
         """用已知训练收益拟合尺度，再给极端输入，最终标量奖励仍应被限制在 [-1,1]。"""
         learner = IRLRewardLearner()
-        frame = pd.DataFrame({f'future_ret_{h}': [.001, -.001] for h in HORIZONS})
+        frame = pd.DataFrame({f'future_ret_{h}': [.001, -.001] for h in HORIZON_EVENTS})
         learner.fit_scales(frame)
         self.assertEqual(learner.score(learner.features([100, 100, 100])), 1.)
         self.assertEqual(learner.score(learner.features([-100, -100, -100])), -1.)

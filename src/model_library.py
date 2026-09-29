@@ -1,6 +1,7 @@
 """
 轻量模型库模块 (model_library.py)
-对应论文第 3.2 节：构建多样化的轻量级模型作为强化学习的动作空间 (Action Space)。
+受论文第 3.2 节启发，但当前只是相同特征、相同训练期上的异构算法库。
+尚未实现论文通过不同特征集/历史时期构造市场分布候选、每周更新的模型库。
 涵盖线性回归、分类判别、浅层决策树、梯度提升树及启发式动量规则。
 """
 
@@ -107,6 +108,16 @@ class LogisticDirectionModel(LightModelBase):
         values = np.array([self.class_returns[int(c)] for c in self.model.classes_])
         return self.model.predict_proba(X) @ values
 
+    def predict_class(self, X):
+        """输出分类器概率最大类别；不能用期望收益的正负冒充分类器 argmax。
+
+        例如平盘概率最大，但较小上涨概率乘上较大涨幅后，期望收益仍可为正。
+        单类别训练的回退与连续预测保持同一训练类别。
+        """
+        if self.constant is not None:
+            return np.full(len(X), next(iter(self.class_returns)), dtype=int)
+        return self.model.predict(X)
+
 
 class DecisionTreeModel(LightModelBase):
     """
@@ -169,7 +180,7 @@ class MomentumRuleModel(LightModelBase):
     def predict(self, X: np.ndarray) -> np.ndarray:
         # 特征索引定义 (参考 data_loader):
         # index 2: obi_l1 (一级失衡)
-        # index 6: ret_lag_5 (5-tick 动量)
+        # index 6: ret_lag_5 (5 事件动量)
         obi = X[:, 2] if X.shape[1] > 2 else np.zeros(len(X))
         mom = X[:, 6] if X.shape[1] > 6 else np.zeros(len(X))
         # X 已按训练统计量标准化，这里的 obi/mom 是标准化数值，不是原始 OBI/收益。
@@ -203,5 +214,5 @@ def train_model_library(models: List[LightModelBase], X_train: np.ndarray, y_tra
         fit_time = time.perf_counter() - t0
         latency = model.evaluate_latency(X_train[:1000])
         latencies[model.name] = latency
-        print(f"  - [{model.name}] 训练完成 (耗时: {fit_time:.2f}s, 推理延迟: {latency:.2f} us/tick)")
+        print(f"  - [{model.name}] 训练完成 (耗时: {fit_time:.2f}s, 推理延迟: {latency:.2f} us/event)")
     return latencies

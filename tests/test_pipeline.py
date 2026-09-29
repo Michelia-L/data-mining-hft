@@ -43,10 +43,10 @@ class PipelineTests(unittest.TestCase):
         rng = np.random.default_rng(17)
         raw = quotes(100 + np.cumsum(rng.choice([-.125, 0., .125], size=3000)))
         with threadpool_limits(limits=1), redirect_stdout(io.StringIO()):
-            with patch('run_experiments.load_and_preprocess_ticks', side_effect=lambda *args: raw.copy()):
+            with patch('run_experiments.load_and_preprocess_events', side_effect=lambda *args: raw.copy()):
                 cls.first = run_window('CME_ES', 'synthetic', 0, 3000, 42)
                 cls.second = run_window('CME_ES', 'synthetic', 0, 3000, 42)
-        cls.summary = dict(schema_version=2, metadata=dict(seed=42, windows=1, rows=3000, python='3.12', threads=1),
+        cls.summary = dict(schema_version=3, metadata=dict(seed=42, windows=1, rows=3000, python='3.12', threads=1),
                            experiments={'CME_ES': dict(source_file='synthetic', source_rows=3000,
                                                       windows=[cls.first], aggregate=aggregate([cls.first]))})
 
@@ -73,6 +73,8 @@ class PipelineTests(unittest.TestCase):
         first = self.first['strategies'][0]
         self.assertIn(f"{first['net_pnl_usd']:.2f}", report)
         self.assertIn('旧版含前视偏差的收益结论已撤回', report)
+        self.assertIn('并列最佳', report)
+        self.assertIn('非独立重复实验', report)
         page = render_dashboard(self.summary)
         self.assertNotIn('https://', page)  # 离线打开不能依赖远端图表脚本。
         self.assertIn('const DATA = ', page)

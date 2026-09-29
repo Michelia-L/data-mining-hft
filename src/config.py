@@ -2,7 +2,7 @@
 
 阅读顺序建议：本文件 → data_loader → model_library → irl_reward →
 model_selector → execution_engine，最后看 run_experiments 的完整流程。
-这里的事件步（代码中也称 tick）是一条排序后的订单簿行情，不是固定秒数；
+这里的事件步是一条排序后的订单簿行情，不是固定秒数；
 tick_size 则是最小报价跳动，两者含义不同。金额统一按美元记账。"""
 from pathlib import Path
 
@@ -20,9 +20,9 @@ DATASET_PATHS = {
 # 根种子用于随机策略；三个随机基线分别使用 seed、seed+1、seed+2。
 SEED = 42
 # 每个独立实验窗口先读取的原始行数；清洗后有效事件可能略少。
-SAMPLE_TICKS = 60000
+SAMPLE_EVENTS = 60000
 # 多尺度收益标签与奖励的前瞻事件数；在线反馈必须等待最长尺度到期。
-HORIZONS = [10, 30, 90]
+HORIZON_EVENTS = [10, 30, 90]
 # 顺序为训练、奖励校准、参数验证、测试；前三段还要扣除尾部隔离区。
 SPLIT_RATIOS = (0.50, 0.15, 0.15, 0.20)
 # 每个窗口重新以这笔资金开始；收益率 = 美元盈亏 / 初始资金。
@@ -40,9 +40,9 @@ INSTRUMENT_CONFIG = {
                       multiplier=1000.0, commission_per_order=1.50,
                       slippage_ticks=0.5, trade_threshold=0.00006),
 }
-# ucb_c 控制探索；ars_window 按奖励到达的事件步计时；holding_period 是持仓事件上限。
+# ucb_c 控制探索；ars_window_events 按奖励到达的事件步计时；holding_period 是持仓事件上限。
 # latency_events=1 表示本步决策下一条行情执行，不代表固定一秒网络延迟。
-RL_CONFIG = dict(ucb_c=0.1, ars_window=300, holding_period=30, latency_events=1)
+RL_CONFIG = dict(ucb_c=0.1, ars_window_events=300, holding_period=30, latency_events=1)
 # 只在验证段比较这些探索系数，不能根据测试净收益回头选择。
 UCB_CANDIDATES = (0.01, 0.1, 0.8)
 RESULTS_DIR = str(BASE_DIR / 'results')

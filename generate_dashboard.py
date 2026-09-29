@@ -11,7 +11,7 @@ from src.config import BASE_DIR, SUMMARY_JSON_PATH
 # 保持模板与数据分离：占位符只在 render_dashboard 中一次性替换。
 TEMPLATE = '''<!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FMATO 因果回测实验</title>
+<title>FMATO 思路的课程工程实验（非论文数值复现）</title>
 <style>
 /* 深色卡片和两列网格只负责布局；窄屏时改为单列，宽表允许横向滚动。 */
 :root{color-scheme:dark;font:15px system-ui;color:#dbe5ee;background:#0b1220}body{max-width:1440px;margin:auto;padding:28px}
@@ -22,19 +22,19 @@ th,td{text-align:right;border-bottom:1px solid #26344b;padding:9px;font-size:13p
 svg{width:100%;height:260px}button{background:#26344b;color:inherit;border:0;padding:8px;cursor:pointer}.muted{color:#94a3b8}
 @media(max-width:800px){.grid{grid-template-columns:1fr}body{padding:14px}}a{color:#7dd3fc}
 </style>
-<h1>FMATO 因果回测实验</h1>
-<p>有限策略奖励学习 · 延迟反馈 · 下一事件成交 · 美元记账与逐事件盯市。当前数据仅支持同一文件内多个时间段的比较。</p>
+<h1>FMATO 思路的课程工程实验（非论文数值复现）</h1>
+<p>有限策略奖励学习 · 延迟反馈 · 下一事件成交 · 美元记账与逐事件盯市。当前数据仅支持同一文件内多个时间段的比较。CME/ICE 数据不复现论文中国期货实验数值。</p>
 <label>品种 <select id="dataset"></select></label> <label>时间窗口 <select id="window"></select></label>
-<div class="card" id="scope"></div>
+<div class="card" id="scope"></div><div class="card"><h2>验证选择与并列项</h2><div id="choices"></div></div>
 <div class="grid"><div class="card"><h2>账户收益曲线（初始资金 $100,000）</h2><label>策略 <select id="strategy"></select></label> <label>曲线 <select id="metric"><option value="net">净收益</option><option value="gross">毛收益</option></select></label><div id="curve"></div></div>
 <div class="card"><h2>多尺度奖励权重</h2><div id="weights"></div><p>有限可执行策略库的校准结果；权重不唯一，不代表尺度预测能力的独立证明。</p></div></div>
 <div class="grid"><div class="card"><h2>测试起点前五档盘口</h2><p id="quote-time"></p><div id="book"></div></div>
 <div class="card"><h2>模型选择频率</h2><div id="actions"></div></div></div>
 <div class="card"><h2>测试策略明细</h2><div id="performance"></div></div>
 <div class="card"><h2>预测与推理诊断</h2><p id="baseline"></p><div id="models"></div></div>
-<div class="card"><h2>跨窗口汇总（美元）</h2><p>各窗重置资金；合计不是连续账户收益，窗口也不是独立交易日。</p><div id="aggregate"></div></div>
-<div class="card"><h2>评估约定与限制</h2><p>数据按训练/奖励校准/验证/测试四段切分，并清除跨边界标签。仅在最长奖励周期到期后更新选择器。ME 按预测信号评价，OE 按真实或独立影子账户成交评价。成本包含点差、配置滑点与手续费，期末强制平仓。</p>
-<p>最大回撤用完整盯市曲线计算，展示曲线经过抽样。年化夏普不适用于当前短样本，记为 N/A。延迟为单条预测 P50/P95，不包括特征提取、选择器及网络链路。撮合没有模拟排队、部分成交或市场冲击；不能直接外推实盘收益。</p></div>
+<div class="card"><h2>文件内多窗口描述统计（非独立重复实验）</h2><p>各窗重置资金；合计不是连续账户收益，窗口也不是独立交易日。</p><div id="aggregate"></div></div>
+<div class="card"><h2>评估约定与限制</h2><p>数据按训练/奖励校准/验证/测试四段切分，并清除跨边界标签。仅在最长奖励周期到期后更新选择器。ME 使用与执行一致的门槛，OE 校准按成熟订单平均，默认不扣成本；NetOE 另列敏感性。成本包含点差、配置滑点与手续费，期末强制平仓。</p>
+<p>默认价格差奖励不缩放、不裁剪；归一化收益率是另一种工程模式。非负权重是附加假设，SignedBox 检查负权敏感性。CausalShadowARS 是连续影子账户的 300 事件滑窗，未实现 Algorithm 3 的过去 30 分钟重回测；CausalEventUCB 每事件选择、无成交反馈零，未实现固定期间更新。模型库使用同一特征与训练期；短验证段重复选参有过拟合风险。详见仓库 docs/paper_alignment.md。</p><p>最大回撤用完整盯市曲线计算，展示曲线经过抽样。年化夏普不适用于当前短样本，记为 N/A。延迟为单条预测 P50/P95，不包括特征提取、选择器及网络链路。撮合没有模拟排队、部分成交或市场冲击；不能直接外推实盘收益。</p></div>
 <script>
 // Python 在保存页面前替换占位符；打开 HTML 后直接读取内嵌数据，不请求远端服务。
 const DATA = __DATA__;
@@ -67,16 +67,19 @@ function plot(){
 // 切换品种/窗口后刷新全部表格和曲线；交易绩效直接取后端保存值，不重新年化。
 function render(){
  const e=DATA.experiments[$('dataset').value], w=current(), t=w.partitions.test;
- $('scope').textContent=`${w.symbol} · 测试 ${t.start} → ${t.end} · ${fmt(t.duration_seconds)} 秒 · ${t.rows.toLocaleString()} 事件 · 前三段各清除至少 ${w.purge_events} 事件 · 门槛 ${w.tuning.threshold} · 验证最佳模型 ${w.tuning.validation_best_model}`;
+ $('scope').textContent=`${w.symbol} · 测试 ${t.start} → ${t.end} · ${fmt(t.duration_seconds)} 秒 · ${t.rows.toLocaleString()} 事件 · 前三段各清除至少 ${w.purge_events} 事件 · 门槛 ${w.tuning.threshold} · 奖励模式 ${w.reward_definition}`;
+ // 并列规则与候选完全来自后端记录，不根据测试表现再排序。
+ const choices=[['门槛',w.tuning.threshold_choice],['固定模型',w.tuning.fixed_choice],['校准专家',w.calibration_expert_choice],...Object.entries(w.tuning.c_choices).map(([k,c])=>['UCB-'+k,c])];
+ table('choices',['项目','选中','最佳/并列最佳候选','规则'],choices.map(([label,c])=>[label,c.selected,(c.tied_best_candidates.length>1?'并列最佳：':'最佳：')+c.tied_best_candidates.join(', '),c.tie_break_rule]));
  options('strategy',w.strategies.map((s,i)=>[i,s.strategy]));plot();
  const q=w.l2_snapshot; $('quote-time').textContent=q.timestamp;
  table('book',['档位','买量','买价','卖价','卖量'],q.bids.map((b,i)=>[i+1,fmt(b.size,0),fmt(b.price,3),fmt(q.asks[i].price,3),fmt(q.asks[i].size,0)]));
- table('actions',['策略',...w.model_eval.map(m=>m.name)],w.strategies.filter(s=>s.strategy.startsWith('FMATO-')).map(s=>[s.strategy,...w.model_eval.map(m=>pct(s.action_distribution[m.name]||0))]));
- table('weights',['奖励','10 events','30 events','90 events','最终间隔','专家可表示'],Object.entries(w.rewards).map(([k,r])=>[k,...r.weights.map(x=>fmt(x,4)),fmt(r.diagnostics.final_margin,6),String(r.diagnostics.expert_representable)]));
+ table('actions',['策略',...w.model_eval.map(m=>m.name)],w.strategies.filter(s=>s.strategy.startsWith('Variant-')).map(s=>[s.strategy,...w.model_eval.map(m=>pct(s.action_distribution[m.name]||0))]));
+ table('weights',['奖励','10 events','30 events','90 events','最终间隔','专家可表示'],[...Object.entries(w.rewards),...Object.entries(w.signed_weight_sensitivity).map(([k,r])=>[k+' SignedBox',r])].map(([k,r])=>[k,...r.weights.map(x=>fmt(x,4)),fmt(r.diagnostics.final_margin,6),String(r.diagnostics.expert_representable)]));
  table('performance',['策略','净盈亏 $','毛盈亏 $','成本 $','平仓笔数','胜率','每笔净盈亏 $','最大回撤','夏普'],w.strategies.map(s=>[s.strategy,fmt(s.net_pnl_usd),fmt(s.gross_pnl_usd),fmt(s.friction_usd),s.total_trades,pct(s.win_rate),fmt(s.avg_trade_net_usd),pct(s.max_drawdown),fmt(s.sharpe_ratio)]));
  const b=w.prediction_baselines;
  $('baseline').textContent=`零收益预测准确率 ${fmt(b.zero_direction_accuracy)}%，训练多数类基线 ${fmt(b.train_majority_accuracy)}%；零收益 MSE ${b.zero_prediction_mse.toExponential(3)}。有标签 ${b.evaluated_rows} 行；尾部 ${b.unlabeled_tail} 行仅参与执行。`;
- table('models',['模型','准确率 %','平衡准确率 %','非零方向 %','MSE','单条 P50 μs','单条 P95 μs','批量 μs/行'],w.model_eval.map(m=>[m.name,fmt(m.direction_accuracy),fmt(m.balanced_accuracy),fmt(m.nonzero_direction_accuracy),m.mse.toExponential(3),fmt(m.latency.single_p50_us),fmt(m.latency.single_p95_us),fmt(m.latency.batch_us_per_row,3)]));
+ table('models',['模型','原始符号 %','门槛三类 %','有效信号 %','覆盖率','分类 argmax %','MSE','单条 P50 μs','单条 P95 μs','批量 μs/行'],w.model_eval.map(m=>[m.name,fmt(m.raw_sign_accuracy),fmt(m.thresholded_signal_accuracy),fmt(m.active_signal_accuracy),pct(m.signal_coverage),fmt(m.classifier_argmax_accuracy),m.mse.toExponential(3),fmt(m.latency.single_p50_us),fmt(m.latency.single_p95_us),fmt(m.latency.batch_us_per_row,3)]));
  table('aggregate',['策略','合计净盈亏 $','平均 $','最差 $','最好 $','总平仓笔数'],e.aggregate.map(a=>[a.strategy,fmt(a.net_pnl_usd_sum),fmt(a.net_pnl_usd_mean),fmt(a.net_pnl_usd_min),fmt(a.net_pnl_usd_max),a.total_trades]));
 }
 // 品种变化时先重建其窗口列表，再刷新内容，避免沿用另一个品种的窗口索引。
@@ -93,8 +96,8 @@ def render_dashboard(data):
     JSON 中的中文原样保留；NaN/Infinity 被禁止。把小于号替换为 JSON 的
     Unicode 转义，防止数据中的结束脚本标签提前结束 HTML 脚本节点。
     这项转义不会改变浏览器解码后的字段值，且只用于展示数据的安全嵌入。"""
-    if data.get('schema_version') != 2:
-        raise ValueError('Regenerate experiments with schema version 2')
+    if data.get('schema_version') != 3:
+        raise ValueError('Regenerate experiments with schema version 3')
     payload = json.dumps(data, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')
     return TEMPLATE.replace('__DATA__', payload)
 

@@ -1,9 +1,9 @@
 """课程实验总入口：将数据处理、奖励校准、验证调参与样本外回放串起来。
 
 每个数据文件选取若干不重叠窗口，每个窗口独立执行四段流程：
-1. 训练段拟合特征标准化、五个预测模型以及奖励尺度；
-2. 校准段选可执行专家，并分别拟合 ME/OE 的多尺度奖励权重；
-3. 验证段选择共同交易门槛、UCB 探索系数和最佳固定模型；
+1. 训练段拟合标准化、模型及可选奖励尺度；
+2. 验证段静态集成选共同门槛，校准段按此门槛选专家、拟合奖励；
+3. 验证段继续选择 UCB 系数和固定模型（存在重复选参风险）；
 4. 测试段比较动态策略、基线和奖励消融，保存指标与可追溯元数据。
 
 组员可先阅读 run_window 理解单窗实验，再阅读 main 理解多窗组织和结果保存。
@@ -20,14 +20,14 @@ from pathlib import Path
 import numpy as np
 from sklearn.metrics import confusion_matrix, balanced_accuracy_score
 from threadpoolctl import threadpool_limits
-from src.config import (BASE_DIR, DATASET_PATHS, SAMPLE_TICKS, HORIZONS, SEED,
+from src.config import (BASE_DIR, DATASET_PATHS, SAMPLE_EVENTS, HORIZON_EVENTS, SEED,
                         INITIAL_CAPITAL, QUANTITY, INSTRUMENT_CONFIG, RL_CONFIG,
                         UCB_CANDIDATES, SPLIT_RATIOS, SUMMARY_JSON_PATH)
-from src.data_loader import (dataset_row_count, load_and_preprocess_ticks,
+from src.data_loader import (dataset_row_count, load_and_preprocess_events,
                              extract_microstructure_features, prepare_train_test_split)
 from src.model_library import build_model_library, train_model_library
 from src.irl_reward import IRLRewardLearner
-from src.model_selector import (build_all_selectors, UCBSelector, ARSSelector,
+from src.model_selector import (build_all_selectors, CausalEventUCBSelector, CausalShadowARSSelector,
                                 SingleModelSelector, EnsembleSelector, FlatSelector, RandomSelector)
 from src.execution_engine import ExecutionEngine
 from src.artifacts import pretty_json
@@ -44,7 +44,7 @@ def file_hash(path):
     return digest.hexdigest()
 
 
-def evaluate_models(models, predictions, y, train_y):
+def evaluate_models(models, predictions, y, train_y, threshold, X_test=None):
     """计算测试预测指标，同时给出可比较的简单基线。
 
     predictions 为 N×K，y 为长度 N 的真实未来收益；尾部没有标签的行只
@@ -63,13 +63,25 @@ def evaluate_models(models, predictions, y, train_y):
         p = predictions[valid, i]
         direction = np.sign(p).astype(int)
         nonzero = truth != 0
+        trading = np.abs(p) > threshold
+        threshold_direction = np.where(trading, direction, 0)
         rows.append(dict(name=model.name, mse=float(np.mean((p - y[valid]) ** 2)),
-                         direction_accuracy=float(np.mean(direction == truth) * 100),
+                         raw_sign_accuracy=float(np.mean(direction == truth) * 100),
                          balanced_accuracy=float(balanced_accuracy_score(truth, direction) * 100),
                          nonzero_direction_accuracy=float(np.mean(direction[nonzero] == truth[nonzero]) * 100)
                          if nonzero.any() else None,
                          confusion_matrix=confusion_matrix(truth, direction, labels=[-1, 0, 1]).tolist(),
-                         latency_us=model.latency_us, latency=model.latency))
+                         latency_us=model.latency_us, latency=model.latency,
+                         thresholded_signal_accuracy=float(np.mean(threshold_direction == truth) * 100),
+                         active_signal_accuracy=float(np.mean(direction[trading] == truth[trading]) * 100)
+                         if trading.any() else None,
+                         signal_coverage=float(trading.mean()), threshold=float(threshold)))
+        # 逻辑回归的类别 argmax 与期望收益符号不是同一预测，分别报告，避免误导。
+        if hasattr(model, 'predict_class') and X_test is not None:
+            classes = model.predict_class(X_test[valid])
+            rows[-1]['classifier_argmax_accuracy'] = float(np.mean(classes == truth) * 100)
+            rows[-1]['classifier_confusion_matrix'] = confusion_matrix(
+                truth, classes, labels=[-1, 0, 1]).tolist()
     baselines = dict(evaluated_rows=int(valid.sum()), unlabeled_tail=int((~valid).sum()),
                      class_order=['down', 'flat', 'up'],
                      class_proportions={str(c): float(np.mean(truth == c)) for c in [-1, 0, 1]},
@@ -89,68 +101,107 @@ def static_selectors(models):
             + [EnsembleSelector('Baseline-Static-Ensemble', models), FlatSelector('Baseline-Cash', models)])
 
 
-def run_window(key, path, offset, rows, seed):
+def select_with_ties(values, candidates, tolerance=1e-9):
+    """显式记录并列最优；按预先声明的候选顺序选择首项，不偷看测试表现。
+
+    tolerance 是美元盈亏的绝对数值容差，不随利润大小放大。顺序来自配置，
+    不能把并列时选择首个模型描述成统计意义上的唯一最优。
+    """
+    values = np.asarray(values, float)
+    best = np.flatnonzero(np.abs(values - values.max()) <= tolerance)
+    return dict(selected_index=int(best[0]), selected=candidates[int(best[0])],
+                tied_best_candidates=[candidates[int(i)] for i in best],
+                tie_break_rule='first_in_declared_candidate_order', tolerance_usd=tolerance)
+
+
+def gated_me_expectation(learner, reference_prices, future_prices, signal, threshold):
+    """只平均超过执行门槛的信号；零信号策略约定零特征，并返回有效信号数。
+
+    这是论文强调极端预测的最小门槛化近似，未复刻 top-1/1000 排序协议。
+    校准与测试采用同一门槛，不能校准所有微小预测、交易时却筛掉它们。
+    """
+    active = np.abs(signal) > threshold
+    if not active.any():
+        return np.zeros(len(learner.horizons)), 0
+    features = learner.features_from_prices(reference_prices[active, None],
+        future_prices[active], np.sign(signal[active, None]))
+    return features.mean(axis=0), int(active.sum())
+
+
+def run_window(key, path, offset, rows, seed, reward_definition="paper_price_difference"):
     """完成一个原始数据窗口的独立实验，返回可序列化的详细结果。
 
     key 为品种配置键，path 为行情文件，offset/rows 按原始行定位窗口，
     seed 控制随机基线。每次都重新训练模型和初始化选择器，不继承其他窗口状态。
     输出包含真实时间范围、调参轨迹、奖励诊断、预测指标、策略对比和资金曲线。"""
     start = time.perf_counter()
-    df, features = extract_microstructure_features(load_and_preprocess_ticks(path, rows, offset))
+    df, features = extract_microstructure_features(load_and_preprocess_events(path, rows, offset))
     split = prepare_train_test_split(df, features)
     models = build_model_library()
     train_model_library(models, split['X_train'], split['y_train'])
     # 模型此后冻结：预先计算整批预测只是提速，每行输入特征仍只依赖当时及过去行情。
     predictions = {part: np.column_stack([m.predict(split[f'X_{part}']) for m in models])
                    for part in ('calibration', 'validation', 'test')}
-    base_reward = IRLRewardLearner()
+    base_reward = IRLRewardLearner(definition=reward_definition)
     base_reward.fit_scales(split['train_df'])
     base_threshold = INSTRUMENT_CONFIG[key]['trade_threshold']
 
+    # 门槛选择不依赖奖励学习（静态集成不消费反馈），故先冻结验证门槛，再用同一
+    # 门槛重放校准段。验证段反复选门槛/c/固定模型，有选择过拟合风险，报告须说明。
+    # 先用静态集成选一个共同门槛，各策略共享，以减少比较中的执行差异。
+    validation = split['validation_df']
+    tuning = []
+    for threshold in [base_threshold * x for x in (1, 2, 4)]:
+        engine = ExecutionEngine(key, base_reward, threshold=threshold)
+        result = engine.run_backtest(EnsembleSelector('validation', models), validation,
+                                     all_model_preds=predictions['validation'])
+        tuning.append(dict(threshold=threshold, net_pnl_usd=result['net_pnl_usd']))
+    threshold_choice = select_with_ties([x['net_pnl_usd'] for x in tuning],
+                                        [x['threshold'] for x in tuning])
+    threshold = threshold_choice['selected']
+
     # 阶段二：只在校准段回放可执行策略；专家按实际扣费后的美元盈亏选取。
     calibration = split['calibration_df']
-    cal_engine = ExecutionEngine(key, base_reward, threshold=base_threshold)
+    cal_engine = ExecutionEngine(key, base_reward, threshold=threshold)
     cal_selectors = static_selectors(models)
     calibration_results = [cal_engine.run_backtest(s, calibration,
                            all_model_preds=predictions['calibration']) for s in cal_selectors]
-    expert_idx = int(np.argmax([r['net_pnl_usd'] for r in calibration_results]))
+    expert_choice = select_with_ties([r['net_pnl_usd'] for r in calibration_results],
+                                   [s.name for s in cal_selectors])
+    expert_idx = expert_choice['selected_index']
     names = [s.name for s in cal_selectors]
     rewards = {}
     cal_mid = calibration.mid_price.to_numpy()
     # 校准已经发生在测试之前，可以离线计算未来收益；这里只取能在校准段内部到期的信号。
-    count = len(calibration) - max(HORIZONS)
-    future = np.column_stack([cal_mid[h:h + count] / cal_mid[:count] - 1. for h in HORIZONS])
-    mu_me = []
+    count = len(calibration) - max(HORIZON_EVENTS)
+    future_prices = np.column_stack([cal_mid[h:h + count] for h in HORIZON_EVENTS])
+    mu_me, me_counts = [], []
     for i, selector in enumerate(cal_selectors):
         signal = (np.zeros(count) if selector.flat else predictions['calibration'][:count].mean(axis=1)
                   if selector.ensemble else predictions['calibration'][:count, i])
-        mu_me.append(np.mean(np.sign(signal)[:, None] * future / base_reward.scales, axis=0))
-    # ME 评价全部预测信号；OE 使用引擎收集的实际成交特征，二者不能简单互换。
+        expectation, signals = gated_me_expectation(base_reward, cal_mid[:count], future_prices,
+                                                    signal, threshold)
+        mu_me.append(expectation)
+        me_counts.append(signals)
+    # ME 平均过门槛信号；OE 平均已成熟实际成交，分母及零样本情况必须分别保存。
     mu_oe = [r['order_feature_expectation'] for r in calibration_results]
     for reward_type, expectations in [('ME', mu_me), ('OE', mu_oe)]:
-        learner = IRLRewardLearner(scales=base_reward.scales)
+        learner = IRLRewardLearner(scales=base_reward.scales, definition=reward_definition)
         learner.fit_reward_weights(expectations, expert_idx, names)
         rewards[reward_type] = learner
 
-    # 阶段三：先用静态集成选一个共同门槛，各策略共享，以减少比较中的执行差异。
-    validation = split['validation_df']
-    tuning = []
-    for threshold in [base_threshold * x for x in (1, 2, 4)]:
-        engine = ExecutionEngine(key, rewards['ME'], threshold=threshold)
-        result = engine.run_backtest(EnsembleSelector('validation', models), validation,
-                                     all_model_preds=predictions['validation'])
-        tuning.append(dict(threshold=threshold, net_pnl_usd=result['net_pnl_usd']))
-    threshold = max(tuning, key=lambda x: x['net_pnl_usd'])['threshold']
     # 对 ME/OE 分别扫描探索系数，同时保存所有候选分数，便于核查选择依据。
-    c_by_reward, c_trials = {}, {}
+    c_by_reward, c_trials, c_choices = {}, {}, {}
     for reward_type in ('ME', 'OE'):
         trials = []
         for c in UCB_CANDIDATES:
             engine = ExecutionEngine(key, rewards[reward_type], threshold=threshold)
-            result = engine.run_backtest(UCBSelector('validation', models, reward_type, c), validation,
+            result = engine.run_backtest(CausalEventUCBSelector('validation', models, reward_type, c), validation,
                                          all_model_preds=predictions['validation'])
             trials.append(dict(c=c, net_pnl_usd=result['net_pnl_usd']))
-        c_by_reward[reward_type] = max(trials, key=lambda x: x['net_pnl_usd'])['c']
+        choice = select_with_ties([x['net_pnl_usd'] for x in trials], [x['c'] for x in trials])
+        c_choices[reward_type] = choice
+        c_by_reward[reward_type] = choice['selected']
         c_trials[reward_type] = trials
     # “最佳固定模型”也必须由验证段选出，不能事后挑测试表现最好的模型当基线。
     val_fixed = []
@@ -158,7 +209,8 @@ def run_window(key, path, offset, rows, seed):
         result = ExecutionEngine(key, rewards['ME'], threshold=threshold).run_backtest(
             SingleModelSelector('validation', models, i), validation, all_model_preds=predictions['validation'])
         val_fixed.append(result['net_pnl_usd'])
-    best_fixed = int(np.argmax(val_fixed))
+    fixed_choice = select_with_ties(val_fixed, [m.name for m in models])
+    best_fixed = fixed_choice['selected_index']
 
     # 阶段四：冻结以上全部选择，进入测试段。每个策略都使用独立账户和新选择器。
     test = split['test_df']
@@ -173,14 +225,30 @@ def run_window(key, path, offset, rows, seed):
     # 消融实验：固定 ARS、门槛、撮合成本与训练尺度，只改变奖励权重。
     # 单位向量意味着仅使用一个时域；等权向量会在奖励学习器初始化时归一化。
     for reward_type in ('ME', 'OE'):
-        for name, weights in [('Equal', np.ones(len(HORIZONS)))] + [
-                (f'Single-{h}', np.eye(len(HORIZONS))[i]) for i, h in enumerate(HORIZONS)]:
-            learner = IRLRewardLearner(weights=weights, scales=base_reward.scales)
-            selector = ARSSelector(f'Ablation-{reward_type}-ARS-{name}', models, reward_type)
+        for name, weights in [('Equal', np.ones(len(HORIZON_EVENTS)))] + [
+                (f'Single-{h}', np.eye(len(HORIZON_EVENTS))[i]) for i, h in enumerate(HORIZON_EVENTS)]:
+            learner = IRLRewardLearner(weights=weights, scales=base_reward.scales, definition=reward_definition)
+            selector = CausalShadowARSSelector(f'Ablation-{reward_type}-CausalShadowARS-{name}', models, reward_type)
             results.append(ExecutionEngine(key, learner, threshold=threshold).run_backtest(
                 selector, test, all_model_preds=predictions['test']))
+    # signed_box 只放宽权重符号、仍保留 sum(w)=1；[-1,1] 是本项目正则边界，
+    # 不能称作论文规定。NetOE 只更改成本项，保留主实验权重，以隔离该因素。
+    sensitivity = {}
+    for reward_type, expectations in [('ME', mu_me), ('OE', mu_oe)]:
+        signed = IRLRewardLearner(scales=base_reward.scales, definition=reward_definition,
+                                 weight_constraint='signed_box')
+        signed.fit_reward_weights(expectations, expert_idx, names)
+        sensitivity[reward_type] = dict(weights=signed.weights.tolist(), diagnostics=signed.diagnostics)
+        selector = CausalShadowARSSelector(f'Sensitivity-{reward_type}-SignedBox', models, reward_type)
+        results.append(ExecutionEngine(key, signed, threshold=threshold).run_backtest(
+            selector, test, all_model_preds=predictions['test']))
+    net_oe = IRLRewardLearner(weights=rewards['OE'].weights, scales=base_reward.scales,
+                              definition=reward_definition, deduct_cost=True)
+    results.append(ExecutionEngine(key, net_oe, threshold=threshold).run_backtest(
+        CausalShadowARSSelector('Sensitivity-NetOE-FixedWeights', models, 'OE'), test,
+        all_model_preds=predictions['test']))
     model_eval, prediction_baselines = evaluate_models(models, predictions['test'],
-                                                       split['y_test'], split['y_train'])
+                                                       split['y_test'], split['y_train'], threshold, split['X_test'])
     # 报告实际墙钟时间，避免把不同活跃度的相同事件数误当成相同秒数。
     partitions = {}
     for part in ('train', 'calibration', 'validation', 'test'):
@@ -188,7 +256,7 @@ def run_window(key, path, offset, rows, seed):
         partitions[part] = dict(rows=len(frame), start=str(frame.ts_event.iloc[0]),
                                 end=str(frame.ts_event.iloc[-1]),
                                 duration_seconds=float((frame.ts_event.iloc[-1] - frame.ts_event.iloc[0]).total_seconds()))
-    event_seconds = (df.ts_event.shift(-max(HORIZONS)) - df.ts_event).dt.total_seconds().dropna()
+    event_seconds = (df.ts_event.shift(-max(HORIZON_EVENTS)) - df.ts_event).dt.total_seconds().dropna()
     snapshot = test.iloc[0]
     l2_snapshot = dict(timestamp=str(snapshot.ts_event),
                        bids=[dict(price=float(snapshot[f'bid_px_{i:02d}']),
@@ -202,11 +270,17 @@ def run_window(key, path, offset, rows, seed):
                 normalization=dict(mean=split['norm_mean'], std=split['norm_std']),
                 horizon_90_seconds_quantiles={str(q): float(event_seconds.quantile(q)) for q in (.1, .5, .9)},
                 model_eval=model_eval, prediction_baselines=prediction_baselines,
-                reward_scales=base_reward.scales.tolist(),
+                reward_scales=base_reward.scales.tolist(), reward_definition=reward_definition,
+                horizon_unit='events', model_library_design='heterogeneous_same_features_same_training_period',
+                signed_weight_sensitivity=sensitivity, calibration_expert_choice=expert_choice,
+                calibration_me_active_counts=me_counts,
                 rewards={k: dict(weights=v.weights.tolist(), diagnostics=v.diagnostics) for k, v in rewards.items()},
-                calibration_policies=[dict(strategy=r['strategy'], net_pnl_usd=r['net_pnl_usd'])
+                calibration_policies=[dict(strategy=r['strategy'], net_pnl_usd=r['net_pnl_usd'],
+                                          matured_order_count=r['matured_order_count'],
+                                          order_mean_defined=r['order_feature_expectation_defined'])
                                       for r in calibration_results],
-                tuning=dict(threshold=threshold, threshold_trials=tuning, c_by_reward=c_by_reward,
+                tuning=dict(threshold=threshold, threshold_trials=tuning, threshold_choice=threshold_choice,
+                            fixed_choice=fixed_choice, c_choices=c_choices, c_by_reward=c_by_reward,
                             c_trials=c_trials, validation_best_model=models[best_fixed].name,
                             validation_fixed_pnl=val_fixed),
                 strategies=results, elapsed_seconds=time.perf_counter() - start)
@@ -235,7 +309,9 @@ def main():
     随机基线，--output 可让快速验证另存文件。元数据同时记录依赖与源文件哈希，
     其中源码哈希对应生成结果当时的文件；后续仅改注释不应伪造历史运行记录。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--rows', type=int, default=SAMPLE_TICKS, help='Raw events per independent window')
+    parser.add_argument('--rows', type=int, default=SAMPLE_EVENTS, help='Raw events per within-file window')
+    parser.add_argument('--reward-definition', choices=['paper_price_difference', 'normalized_return'],
+                        default='paper_price_difference', help='Reward units; selectors remain explicit event variants')
     parser.add_argument('--windows', type=int, default=3)
     parser.add_argument('--seed', type=int, default=SEED)
     parser.add_argument('--output', default=SUMMARY_JSON_PATH)
@@ -248,8 +324,8 @@ def main():
         revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=BASE_DIR, text=True).strip()
     except (OSError, subprocess.CalledProcessError):
         revision = None
-    summary = dict(schema_version=2, timestamp=time.strftime('%Y-%m-%dT%H:%M:%S%z'), horizons=HORIZONS,
-                   metadata=dict(seed=args.seed, rows=args.rows, windows=args.windows,
+    summary = dict(schema_version=3, timestamp=time.strftime('%Y-%m-%dT%H:%M:%S%z'), horizon_events=HORIZON_EVENTS,
+                   metadata=dict(reward_definition=args.reward_definition, horizon_unit="events", seed=args.seed, rows=args.rows, windows=args.windows,
                                  python=platform.python_version(), platform=platform.platform(),
                                  packages={p: importlib.metadata.version(p) for p in
                                            ['numpy', 'pandas', 'scipy', 'scikit-learn', 'pyarrow', 'threadpoolctl']},
@@ -272,7 +348,7 @@ def main():
             windows = []
             for i, offset in enumerate(offsets):
                 print(f'{key}: window {i + 1}/{args.windows}, offset={offset}', flush=True)
-                windows.append(run_window(key, path, offset, args.rows, args.seed))
+                windows.append(run_window(key, path, offset, args.rows, args.seed, args.reward_definition))
             summary['experiments'][key] = dict(source_file=Path(path).name, source_sha256=file_hash(path),
                                                source_rows=total, windows=windows, aggregate=aggregate(windows))
     out = Path(args.output)

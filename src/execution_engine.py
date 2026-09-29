@@ -115,7 +115,7 @@ class ExecutionEngine:
         每个事件依次执行旧意图 → 结算已成熟奖励 → 逐事件盯市 → 产生新意图。
         ME 从信号步计时，OE 从每次实际买卖成交步计时（包括退出）。ARS 的 OE
         使用各模型独立影子账户，避免把未发生的交易或共享仓位当成独立策略业绩。
-        OE 是扣该次单边成本的未来盯市期望；资金净盈亏另外统计完整开平仓成本。
+        OE 默认不扣成本，NetOE 变体可扣该次单边成本；资金账本始终扣完整开平仓成本。
         末尾尚未成熟的奖励不补写进选择器，也不因此丢弃末尾行情或期末平仓。"""
         preds = np.asarray(all_model_preds, float)
         n = len(test_df)
@@ -134,6 +134,9 @@ class ExecutionEngine:
                    if selector.needs_shadow and selector.reward_type == 'OE' else [])
         # 实际账户与影子账户的成交分开排队，不能混淆奖励归属或重复更新。
         live_pending, shadow_pending = deque(), deque()
+        # EventUCB 的一次拉臂对应一次决策，而不是一笔成交。将该决策触发的全部
+        # 成交绑在一起等待成熟；没有成交也有一条零反馈，避免“探索了却永不观测”。
+        decision_pending = deque()
         # intents 保存每步目标方向，owners 保存当时的模型，以便延迟执行/延迟反馈。
         intents, owners = [], []
         feature_sum = np.zeros(len(hs))
@@ -152,8 +155,8 @@ class ExecutionEngine:
                 order = queue.popleft()
                 start = order['step']
                 # 已由队首条件保证 start+max(hs)<=t，此处每个索引都不超过当前事件。
-                returns = mid[start + hs] / mid[start] - 1.
-                features = self.irl_learner.features(returns, order['side'], order['cost_ratio'])
+                features = self.irl_learner.features_from_prices(
+                    mid[start], mid[start + hs], order['side'], order['cost_ratio'])
                 if collect:
                     feature_sum[:] += features
                     matured_orders += 1
@@ -172,6 +175,8 @@ class ExecutionEngine:
             owner = owners[source] if source >= 0 else 0
             fills = account.advance(t, desired, owner, mid[t], bid[t], ask[t], terminal)
             live_pending.extend(fills)
+            if source >= 0 and not terminal and selector.reward_type == 'OE' and not shadows:
+                decision_pending.append((t, source, owner, fills))
             # 每个影子账户只跟随自己的模型，独立承担相同的延迟、持仓限制和成交成本。
             for i, shadow in enumerate(shadows):
                 signal = preds[source, i] if source >= 0 else 0.
@@ -179,17 +184,35 @@ class ExecutionEngine:
                 shadow_pending.extend(shadow.advance(t, direction, i, mid[t], bid[t], ask[t], terminal))
 
             # 第二步：只将现在已经到期的奖励送入选择器；然后才允许本事件的新选择。
-            mature(live_pending, t, selector.reward_type == 'OE' and not shadows, collect=True)
+            mature(live_pending, t, False, collect=True)
             mature(shadow_pending, t, bool(shadows))
+            while decision_pending and decision_pending[0][0] + horizon <= t:
+                executed, origin, decision_owner, decision_fills = decision_pending.popleft()
+                # 这里归属触发成交的决策模型；Account 中平仓盈亏仍归属原开仓者。
+                # 不把奖励归属与资金归属混用，也不把每事件零奖励声称为 Eq.(5)。
+                vectors = [self.irl_learner.features_from_prices(
+                    mid[executed], mid[executed + hs], f['side'], f['cost_ratio'])
+                    for f in decision_fills]
+                reward = self.irl_learner.score(np.mean(vectors, axis=0)) if vectors else 0.
+                selector.observe(decision_owner, reward, t)
+                if detail:
+                    reward_observations.append(dict(origin_step=origin, executed_step=executed,
+                        observed_step=t, owner=decision_owner, reward=reward,
+                        fill_count=len(decision_fills), kind='OE-event'))
             if selector.reward_type == 'ME' and t >= horizon:
                 start = t - horizon
-                returns = mid[start + hs] / mid[start] - 1.
                 # ARS 可评价各模型的历史信号；UCB 只评价当时实际选中的模型。
                 indices = range(selector.k) if selector.needs_shadow else [owners[start]]
                 for idx in indices:
                     signal = (0. if selector.flat else float(preds[start].mean()) if selector.ensemble
                               else preds[start, idx])
-                    reward = self.irl_learner.score(self.irl_learner.features(returns, np.sign(signal)))
+                    direction = int(signal > self.threshold) - int(signal < -self.threshold)
+                    # ME 使用与执行相同的信号门槛。影子 ARS 平均有效信号；EventUCB
+                    # 每决策一次观测，因此非交易信号反馈零。这是两个不同的平均口径。
+                    if selector.needs_shadow and direction == 0:
+                        continue
+                    reward = self.irl_learner.score(self.irl_learner.features_from_prices(
+                        mid[start], mid[start + hs], direction))
                     selector.observe(idx, reward, t)
                     if detail:
                         reward_observations.append(dict(origin_step=start, observed_step=t,
@@ -217,7 +240,9 @@ class ExecutionEngine:
         points = sorted(set([0, n - 1] + list(range(0, n, max(1, n // 300)))))
         # *_usd 为美元，*_return 以初始资金为分母；max_drawdown 以历史资金峰值为分母。
         # 短区间无法构造独立日收益，夏普返回 None，不假定每天固定交易次数来年化。
-        # 特征总和除以全部事件数 n，使“不交易”也影响校准策略的平均暴露。
+        # Eq.(5) 分母是成熟订单数 M，绝不是行情事件数。M=0 没有可估计均值；
+        # 为让现金策略参加有限策略优化，约定零向量，同时记录 defined=False。
+        # 每事件暴露另列，不能再以 order_feature_expectation 名称混用。
         result = dict(
             strategy=selector.name, total_trades=len(account.trades), total_fills=len(account.fills),
             initial_capital=self.initial_capital, quantity=self.quantity,
@@ -236,8 +261,16 @@ class ExecutionEngine:
             net_curve=(net_array[points] / self.initial_capital).tolist(),
             timestamps=[str(test_df.ts_event.iloc[t]) for t in points], curve_steps=points,
             terminal_position=account.position, matured_order_count=matured_orders,
-            unobserved_terminal_fills=len(live_pending),
-            order_feature_expectation=(feature_sum / n).tolist(),
+            unmatured_fill_rewards_at_end=len(live_pending),
+            order_feature_expectation=(feature_sum / matured_orders if matured_orders else feature_sum).tolist(),
+            order_feature_expectation_defined=bool(matured_orders),
+            event_feature_exposure=(feature_sum / n).tolist(),
+            reward_definition=self.irl_learner.definition,
+            reward_cost_mode='NetOE' if self.irl_learner.deduct_cost else 'PaperOE-no-cost',
+            reward_horizon_unit='events',
+            selector_window_events=getattr(selector, 'window_events', None),
+            decision_count=len(selector.action_history),
+            feedback_counts=(selector.feedback_counts.tolist() if hasattr(selector, 'feedback_counts') else None),
             observed_rewards=len(selector.reward_history),
         )
         if detail:

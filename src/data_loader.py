@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 from typing import Tuple, List, Dict
-from src.config import SAMPLE_TICKS, SPLIT_RATIOS, HORIZONS
+from src.config import SAMPLE_EVENTS, SPLIT_RATIOS, HORIZON_EVENTS
 
 
 def dataset_row_count(path):
@@ -21,7 +21,7 @@ def dataset_row_count(path):
         return sum(1 for _ in stream) - 1
 
 
-def load_and_preprocess_ticks(file_path, nrows=SAMPLE_TICKS, offset=0):
+def load_and_preprocess_events(file_path, nrows=SAMPLE_EVENTS, offset=0):
     """读取从 offset 开始的 nrows 条原始记录，清洗后返回按事件排序的 DataFrame。
 
     offset、nrows 都按原始文件行计数；nrows=None 表示读到文件结束。
@@ -133,13 +133,13 @@ def extract_microstructure_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Lis
         features.append(col_name)
         
     # 7. 构建论文核心：多尺度未来收益率期望标签 (Future Multi-horizon Returns)
-    # E_10, E_30, E_90：未来 10、30、90 ticks 的价格相对变动
-    for h in HORIZONS:
+    # E_10, E_30, E_90：未来 10、30、90 events 的价格相对变动
+    for h in HORIZON_EVENTS:
         col_name = f'future_ret_{h}'
         df[col_name] = (df['mid_price'].shift(-h) - df['mid_price']) / (df['mid_price'] + eps)
         
-    # 主预测目标：未来 30-tick 价格变动方向与大小
-    df['target_ret'] = df[f'future_ret_{HORIZONS[1]}']
+    # 主预测目标：未来 30 个事件的价格变动方向与大小
+    df['target_ret'] = df[f'future_ret_{HORIZON_EVENTS[1]}']
     df['target_dir'] = np.sign(df['target_ret'])
     
     # 仅清理特征异常；保留没有未来标签的尾部行情用于执行和期末平仓
@@ -161,7 +161,7 @@ def prepare_train_test_split(df: pd.DataFrame, feature_cols: List[str]) -> Dict:
     返回各段 DataFrame、标准化特征矩阵 X、目标 y 和仅从训练段估计的均值/标准差。"""
     n = len(df)
     bounds = [0] + [int(n * x) for x in np.cumsum(SPLIT_RATIOS)[:-1]] + [n]
-    gap = max(HORIZONS)
+    gap = max(HORIZON_EVENTS)
     partitions = {}
     for i, name in enumerate(('train', 'calibration', 'validation', 'test')):
         start, stop = bounds[i], bounds[i + 1]

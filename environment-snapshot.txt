@@ -1,4 +1,4 @@
-# Exact versions used for checked-in artifacts (Python 3.12).
+# 生成随仓库结果时的环境版本快照（Python 3.12），不是完整跨平台依赖锁。
 numpy==2.5.3
 pandas==3.0.6
 scipy==1.18.1

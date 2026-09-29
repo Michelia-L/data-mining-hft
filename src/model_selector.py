@@ -2,7 +2,8 @@
 
 select_model(step) 只根据已观察奖励作决策；observe(idx,reward,step)
 由执行引擎在奖励成熟后调用。选择器不访问行情未来标签，也不负责下单记账。
-奖励统一处于 [-1,1]；UCB 使用平均奖励加探索项，ARS 使用近期已成熟奖励。"""
+归一化奖励处于 [-1,1]，价格差奖励不裁剪。以下两类均是事件级工程变体，
+不等价于论文按固定期间更新的 Algorithm 2 或历史区间重回测的 Algorithm 3。"""
 from collections import deque
 import numpy as np
 from src.config import RL_CONFIG, SEED
@@ -51,8 +52,8 @@ class BaseSelector:
                 for m, c in zip(self.models, counts)}
 
 
-class UCBSelector(BaseSelector):
-    """置信上界选择器：在利用已有高奖励模型与探索少选模型之间权衡。
+class CausalEventUCBSelector(BaseSelector):
+    """事件级 UCB 变体（不是论文 Algorithm 2 的固定期间评价）：在利用已有高奖励模型与探索少选模型之间权衡。
 
     分数为平均成熟奖励 + c*sqrt(2*log(1+总选择数)/该模型选择数)。
     反馈延迟时，“已选择次数”和“已观察奖励次数”不同，必须分开统计。"""
@@ -80,23 +81,27 @@ class UCBSelector(BaseSelector):
         return self.record(idx)
 
     def observe(self, idx, reward, step):
-        """按奖励归属更新反馈数量和奖励总和；一笔选择可以没有成交，也可能对应多笔反馈。"""
+        """按奖励归属更新反馈数量和奖励总和；引擎将同一决策产生的多笔成交先取平均，无成交则反馈零，
+        因而每个已成熟决策恰有一次反馈。末尾未成熟决策只保留在选择计数中。"""
         super().observe(idx, reward, step)
         self.feedback_counts[idx] += 1
         self.sum_rewards[idx] += reward
 
 
-class ARSSelector(BaseSelector):
-    """滑窗平均奖励选择器，使用全模型信号或独立影子账户提供反馈。
+class CausalShadowARSSelector(BaseSelector):
+    """因果影子账户 ARS 变体，不是论文 Algorithm 3 的历史窗口重新回测。
+
+    账户从回放起点连续运行；window_events=300 表示奖励到达后的事件窗口，
+    不是论文举例的过去 30 分钟。不能用不等间隔事件近似声称固定经济时间。
 
     窗口按奖励到达的事件时间计，而不是每个模型各保留固定条数；因此少交易
     模型很久以前的奖励也会过期，不会永久支配选择。"""
     needs_shadow = True
 
-    def __init__(self, name, models, reward_type='ME', window_size=RL_CONFIG['ars_window']):
+    def __init__(self, name, models, reward_type='ME', window_events=RL_CONFIG['ars_window_events']):
         """每个模型维护一个 (观察事件步, 奖励) 队列及其运行和，便于快速增删。"""
         super().__init__(name, models, reward_type)
-        self.window_size = window_size
+        self.window_events = window_events
         self.queues = [deque() for _ in models]
         self.sums = np.zeros(self.k)
 
@@ -112,7 +117,7 @@ class ARSSelector(BaseSelector):
         全部模型都没有可用反馈时按步数轮换；某个模型窗口为空时其分数为 0。
         这是明确的冷启动约定，不能把“没有观测”解释成已证明该模型没有风险。"""
         for i, queue in enumerate(self.queues):
-            while queue and queue[0][0] <= step - self.window_size:
+            while queue and queue[0][0] <= step - self.window_events:
                 self.sums[i] -= queue.popleft()[1]
         # 所有奖励仍在等待期，或已有奖励全部过期时，轮换冷启动。
         if not any(self.queues):
@@ -163,16 +168,16 @@ class RandomSelector(BaseSelector):
 
 
 def build_all_selectors(models, c_by_reward=None, seed=SEED):
-    """构建四个 FMATO 组合和公共基线，每次调用都返回全新的选择器实例。
+    """构建四个显式命名的工程变体组合和公共基线，每次调用都返回全新的选择器实例。
 
     ME/OE 各配 UCB 和 ARS；此外包含每个固定模型、集成、随机、轮换与现金。
     验证最佳模型、额外随机种子和奖励权重消融由实验入口继续添加。"""
     c_by_reward = c_by_reward or {}
     selectors = []
     for reward in ('ME', 'OE'):
-        selectors += [UCBSelector(f'FMATO-{reward}-UCBS', models, reward,
+        selectors += [CausalEventUCBSelector(f'Variant-{reward}-EventUCB', models, reward,
                                   c=c_by_reward.get(reward, RL_CONFIG['ucb_c'])),
-                      ARSSelector(f'FMATO-{reward}-ARS', models, reward)]
+                      CausalShadowARSSelector(f'Variant-{reward}-CausalShadowARS', models, reward)]
     selectors += [SingleModelSelector(f'Baseline-Single-{m.name}', models, i)
                   for i, m in enumerate(models)]
     selectors += [EnsembleSelector('Baseline-Static-Ensemble', models),
