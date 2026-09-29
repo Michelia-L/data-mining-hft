@@ -269,7 +269,8 @@ class ExecutionEngine:
             total_friction=float(account.costs / self.initial_capital),
             max_drawdown=float(drawdowns.max()), max_drawdown_usd=float((peaks - equity).max()),
             sharpe_ratio=None, sharpe_reason='Insufficient independent daily observations; no annualization.',
-            win_rate=float(len(wins) / len(trade_nets)) if len(trade_nets) else 0.,
+            # 没有完整交易时分母为零，胜率未定义；JSON 用 null，展示层显示 N/A。
+            win_rate=float(len(wins) / len(trade_nets)) if len(trade_nets) else None,
             pl_ratio=float(wins.mean() / -losses.mean()) if len(wins) and len(losses) else None,
             avg_trade_net_usd=float(trade_nets.mean()) if len(trade_nets) else 0.,
             turnover_notional_usd=float(account.turnover),

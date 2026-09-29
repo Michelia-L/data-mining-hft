@@ -34,12 +34,12 @@ svg{width:100%;height:260px}button{background:#26344b;color:inherit;border:0;pad
 <div class="card"><h2>预测与推理诊断</h2><p id="baseline"></p><div id="models"></div></div>
 <div class="card"><h2>文件内多窗口描述统计（非独立重复实验）</h2><p>各窗重置资金；合计不是连续账户收益，窗口也不是独立交易日。</p><div id="aggregate"></div></div>
 <div class="card"><h2>评估约定与限制</h2><p>数据按训练/奖励校准/验证/测试四段切分，并清除跨边界标签。仅在最长奖励周期到期后更新选择器。ME 使用与执行一致的门槛，OE 校准按成熟订单平均，默认不扣成本；NetOE 另列敏感性。成本包含点差、配置滑点与手续费，期末强制平仓。</p>
-<p>默认价格差奖励不缩放、不裁剪；归一化收益率是另一种工程模式。非负权重是附加假设，SignedBox 检查负权敏感性。CausalShadowARS 是连续影子账户的 300 事件滑窗，未实现 Algorithm 3 的过去 30 分钟重回测；CausalEventUCB 每事件选择、无成交反馈零，未实现固定期间更新。模型库使用同一特征与训练期；短验证段重复选参有过拟合风险。详见仓库 docs/paper_alignment.md。</p><p>最大回撤用完整盯市曲线计算，展示曲线经过抽样。年化夏普不适用于当前短样本，记为 N/A。延迟为单条预测 P50/P95，不包括特征提取、选择器及网络链路。撮合没有模拟排队、部分成交或市场冲击；不能直接外推实盘收益。</p></div>
+<p>默认价格差奖励不缩放、不裁剪；归一化收益率是另一种工程模式。非负权重是附加假设，SignedBox 检查负权敏感性。CausalShadowARS 是连续影子账户的 300 事件滑窗，未实现 Algorithm 3 的过去 30 分钟重回测；CausalEventUCB 每事件选择、无成交反馈零，未实现固定期间更新。模型库使用同一特征与训练期；短验证段重复选参有过拟合风险。详见仓库 docs/paper_alignment.md。</p><p>最大回撤用完整盯市曲线计算，展示曲线经过抽样。当前样本不足以形成独立日收益，因此不报告 Sharpe。延迟为单条预测 P50/P95，不包括特征提取、选择器及网络链路。撮合没有模拟排队、部分成交或市场冲击；不能直接外推实盘收益。</p></div>
 <script>
 // Python 在保存页面前替换占位符；打开 HTML 后直接读取内嵌数据，不请求远端服务。
 const DATA = __DATA__;
 const $ = id => document.getElementById(id);
-// null 表示该指标当前无法定义（例如短样本夏普），显示 N/A，而不是误导性的 0。
+// null 表示该指标当前无法定义（例如没有交易时的胜率），显示 N/A，而不是误导性的 0。
 const fmt = (x, digits=2) => x == null ? 'N/A' : Number(x).toLocaleString('en-US',{minimumFractionDigits:digits,maximumFractionDigits:digits});
 const pct = x => x == null ? 'N/A' : fmt(x*100)+'%';
 // 通用表格渲染器：headers 为列名，rows 为二维单元格数组。
@@ -76,7 +76,7 @@ function render(){
  table('book',['档位','买量','买价','卖价','卖量'],q.bids.map((b,i)=>[i+1,fmt(b.size,0),fmt(b.price,3),fmt(q.asks[i].price,3),fmt(q.asks[i].size,0)]));
  table('actions',['策略',...w.model_eval.map(m=>m.name)],w.strategies.filter(s=>s.strategy.startsWith('Variant-')).map(s=>[s.strategy,...w.model_eval.map(m=>pct(s.action_distribution[m.name]||0))]));
  table('weights',['奖励','10 events','30 events','90 events','最终间隔','专家可表示'],[...Object.entries(w.rewards),...Object.entries(w.signed_weight_sensitivity).map(([k,r])=>[k+' SignedBox',r])].map(([k,r])=>[k,...r.weights.map(x=>fmt(x,4)),fmt(r.diagnostics.final_margin,6),String(r.diagnostics.expert_representable)]));
- table('performance',['策略','净盈亏 $','毛盈亏 $','成本 $','平仓笔数','胜率','每笔净盈亏 $','最大回撤','夏普'],w.strategies.map(s=>[s.strategy,fmt(s.net_pnl_usd),fmt(s.gross_pnl_usd),fmt(s.friction_usd),s.total_trades,pct(s.win_rate),fmt(s.avg_trade_net_usd),pct(s.max_drawdown),fmt(s.sharpe_ratio)]));
+ table('performance',['策略','净盈亏 $','毛盈亏 $','成本 $','平仓笔数','胜率','每笔净盈亏 $','最大回撤'],w.strategies.map(s=>[s.strategy,fmt(s.net_pnl_usd),fmt(s.gross_pnl_usd),fmt(s.friction_usd),s.total_trades,pct(s.win_rate),fmt(s.avg_trade_net_usd),pct(s.max_drawdown)]));
  const b=w.prediction_baselines;
  $('baseline').textContent=`零收益预测准确率 ${fmt(b.zero_direction_accuracy)}%，训练多数类基线 ${fmt(b.train_majority_accuracy)}%；零收益 MSE ${b.zero_prediction_mse.toExponential(3)}。有标签 ${b.evaluated_rows} 行；尾部 ${b.unlabeled_tail} 行仅参与执行。`;
  table('models',['模型','原始符号 %','门槛三类 %','有效信号 %','覆盖率','分类 argmax %','MSE','单条 P50 μs','单条 P95 μs','批量 μs/行'],w.model_eval.map(m=>[m.name,fmt(m.raw_sign_accuracy),fmt(m.thresholded_signal_accuracy),fmt(m.active_signal_accuracy),pct(m.signal_coverage),fmt(m.classifier_argmax_accuracy),m.mse.toExponential(3),fmt(m.latency.single_p50_us),fmt(m.latency.single_p95_us),fmt(m.latency.batch_us_per_row,3)]));
