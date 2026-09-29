@@ -1,137 +1,146 @@
-"""
-逆强化学习 (IRL) 多尺度奖励优化模块 (irl_reward.py)
-对应论文第 3.3 节与 Algorithm 1：
-通过特征期望匹配 (Feature Expectation Matching) 求解多尺度周期最优权重向量 w*，
-将短周期 (10 ticks)、中周期 (30 ticks) 与长周期 (90 ticks) 融合成兼顾灵敏度与抗噪性的综合奖励函数。
-"""
+"""多尺度奖励学习：论文 Algorithm 1 的有限可执行策略近似。
 
+一般强化学习给定奖励后寻找好策略；逆强化学习则观察专家行为，尝试反推出
+能解释专家的奖励。本项目先在校准段选出净盈亏最好的可执行策略作为专家，
+再交替求奖励权重与候选库中的最优响应。专家也可能是不交易的现金策略。
+这里用有限策略库代替论文未公开的生产参数优化器，不声称奖励被唯一识别，
+也不把线性规划收敛等同于学到了可盈利的专家行为。"""
 import numpy as np
-import pandas as pd
-from typing import List, Dict, Tuple
-from src.config import HORIZONS
+from scipy.optimize import linprog
+from src.config import HORIZON_EVENTS
 
 
 class IRLRewardLearner:
-    """
-    逆强化学习多尺度奖励学习器
-    对应论文公式 (3) 与 (4)：
-        E(O) = sum_{k} w_k * E_{T_k}, T = [10, 30, 90]
-        sum w_k = 1, w_k >= 0
-    """
-    def __init__(self, horizons: List[int] = HORIZONS):
-        self.horizons = horizons
-        self.num_scales = len(horizons)
-        # 初始化权重：默认等权 [1/3, 1/3, 1/3]
-        self.weights = np.ones(self.num_scales) / self.num_scales
-        self.expert_expectation = None
-        self.random_expectation = None
+    """保存奖励定义、可选归一化参数、权重约束及学习诊断。
 
-    def fit_reward_weights(self, train_df: pd.DataFrame, max_iter: int = 50, lr: float = 0.05) -> np.ndarray:
-        """
-        基于训练集回测轨迹，通过特征期望匹配优化多尺度权重 w* (Algorithm 1)
+    价格差模式与归一化收益率模式显式分开；成本扣除默认关闭。
+    ME 与 OE 分别创建实例，以免两种评价口径共享或覆盖权重。"""
+    def __init__(self, horizons=HORIZON_EVENTS, weights=None, scales=None,
+                 definition="normalized_return", deduct_cost=False, weight_constraint="simplex"):
+        """初始化 H 个时域的权重与尺度。
 
-        参数:
-            train_df (pd.DataFrame): 包含各尺度 future_ret_{h} 的训练集
-            max_iter (int): 迭代优化轮数
-            lr (float): 学习率
+        weights=None 时使用等权；simplex 要求非负，signed_box 允许负值；归一化为和为 1。
+        scales 必须逐项为正；默认全 1 适合手工设定，正式实验调用 fit_scales 拟合。"""
+        # Eq.(2) 是价格差；归一化收益率是工程变体，必须显式记录，不能混为同一单位。
+        if definition not in ('paper_price_difference', 'normalized_return'):
+            raise ValueError('Unknown reward definition')
+        if weight_constraint not in ('simplex', 'signed_box'):
+            raise ValueError('Unknown weight constraint')
+        self.definition, self.deduct_cost = definition, deduct_cost
+        self.weight_constraint = weight_constraint
+        self.horizons = list(horizons)
+        self.weights = np.ones(len(horizons)) / len(horizons) if weights is None else np.asarray(weights, float)
+        self.scales = np.ones(len(horizons)) if scales is None else np.asarray(scales, float)
+        if (self.weights.shape != (len(horizons),) or self.scales.shape != self.weights.shape
+                or not np.isfinite(self.weights).all() or not np.isfinite(self.scales).all()
+                or (weight_constraint == "simplex" and (self.weights < 0).any())
+                or (self.scales <= 0).any() or self.weights.sum() <= 0):
+            raise ValueError('Invalid reward weights/scales')
+        self.weights = self.weights / self.weights.sum()
+        if weight_constraint == 'signed_box' and (np.abs(self.weights) > 1. + 1e-12).any():
+            raise ValueError('Normalized signed weights must lie in [-1, 1]')
+        self.diagnostics = {}
 
-        返回:
-            np.ndarray: 归一化后的最优权重向量 w*
-        """
-        print(f"[IRLReward] 开始执行逆强化学习 (IRL) 奖励函数优化 (尺度: {self.horizons})...")
-        
-        # 1. 计算各尺度的未来期望矩阵 (N, 3)
-        ret_cols = [f'future_ret_{h}' for h in self.horizons]
-        ret_matrix = train_df[ret_cols].values
-        
-        # 2. 构建专家策略 (Expert Policy)：选取未来趋势显著且一致的高置信样本
-        # 专家策略：在多尺度收益均显著正向或反向时才开仓的方向准确策略
-        composite_trend = np.mean(ret_matrix, axis=1)
-        expert_mask = np.abs(composite_trend) > np.percentile(np.abs(composite_trend), 85)
-        
-        if np.sum(expert_mask) < 50:
-            expert_mask = np.ones(len(train_df), dtype=bool)
-            
-        expert_signals = np.sign(composite_trend[expert_mask])
-        # 专家策略特征期望 u_E = E[action * future_returns]
-        self.expert_expectation = np.mean(
-            ret_matrix[expert_mask] * expert_signals[:, None], axis=0
-        )
-        
-        # 3. 随机/基线策略特征期望 u_0
-        random_signals = np.random.choice([-1.0, 1.0], size=len(train_df))
-        self.random_expectation = np.mean(
-            ret_matrix * random_signals[:, None], axis=0
-        )
-        
-        print(f"  - 专家策略多尺度特征期望 u_E: {np.round(self.expert_expectation * 1e4, 2)} (bps)")
-        print(f"  - 基线随机策略特征期望 u_R: {np.round(self.random_expectation * 1e4, 2)} (bps)")
-        
-        # 4. 指数梯度投影优化 (Exponentiated Gradient / Softmax IRL)
-        # 求解使得专家策略相对于基线策略在多尺度回报差额最大的 w*，且满足非负与归一化约束
-        log_w = np.zeros(self.num_scales)
-        delta_u = self.expert_expectation - self.random_expectation
-        
-        # 保证差分具有辨识度
-        delta_u = np.maximum(delta_u, 1e-6)
-        
+    def fit_scales(self, train_df):
+        """仅用已清除跨边界标签的训练段估计每个时域的收益幅度。
+
+        取绝对收益的 99% 分位数，使较长时域不会仅因波动幅度大而占据优势。
+        下限 1e-8 防止全零行情导致除零；这里的尺度是幅度校准，不是概率或显著性。"""
+        if self.definition == 'paper_price_difference':
+            self.scales = np.ones(len(self.horizons))
+            return self.scales
+        returns = train_df[[f'future_ret_{h}' for h in self.horizons]].to_numpy()
+        if not np.isfinite(returns).all():
+            raise ValueError('Training labels must be finite and purged')
+        self.scales = np.maximum(np.quantile(np.abs(returns), .99, axis=0), 1e-8)
+        return self.scales
+
+    def fit_reward_weights(self, expectations, expert_idx, policy_names=None, tolerance=1e-8, max_iter=50):
+        """通过最大间隔线性规划与有限策略最优响应，迭代拟合奖励权重。
+
+        参数 expectations 是 P×H 矩阵：P 个候选策略、H 个时域的平均特征期望；
+        expert_idx 是校准段选出的专家行号，policy_names 用于在报告中解释该行号。
+        每轮解 max_w min_j w·(mu_expert-mu_j)，sum(w)=1；符号由 weight_constraint 决定。
+        随后在全部候选策略中选 argmax(mu_j·w)，将这个最强对手加入约束再求解。
+        当已有约束的最大间隔上界与完整策略库的实际间隔相差不超过 tolerance 时停止。
+        返回权重；diagnostics 另记录求解收敛与专家可表示性，两者必须分开解读。"""
+        mu = np.asarray(expectations, float)
+        if mu.ndim != 2 or mu.shape[1] != len(self.horizons) or not np.isfinite(mu).all():
+            raise ValueError('Invalid policy feature expectations')
+        expert = mu[expert_idx]
+        # 从等权策略混合的期望开始，避免随机初始化影响可重复性。
+        visited = [mu.mean(axis=0)]
+        history, converged = [], False
         for iteration in range(max_iter):
-            # Softmax 投影确保 sum(w) = 1 且 w_i > 0
-            w = np.exp(log_w) / np.sum(np.exp(log_w))
-            # 目标梯度：使得权重更偏向于专家区分度更强、信号噪声比更优的尺度
-            gradient = delta_u / (np.linalg.norm(delta_u) + 1e-8)
-            log_w += lr * gradient
-            
-        self.weights = np.exp(log_w) / np.sum(np.exp(log_w))
-        
-        # 格式化打印最终学得的多尺度权重
-        weight_str = ", ".join([f"{h}t: {w:.3f}" for h, w in zip(self.horizons, self.weights)])
-        print(f"[IRLReward] IRL 最优权重求解完成: [{weight_str}]")
+            differences = expert - np.asarray(visited)
+            # 决策变量为 [w_1,...,w_H,margin]。linprog 默认最小化，因此目标取 -margin。
+            # 每个约束 -difference·w + margin <= 0，即 margin 不得超过专家领先幅度。
+            # A_eq 保留论文权重和约束；bounds 是本项目单纯形或有界负权约束。
+            result = linprog(np.r_[np.zeros(len(self.horizons)), -1.],
+                             A_ub=np.c_[-differences, np.ones(len(visited))],
+                             b_ub=np.zeros(len(visited)),
+                             A_eq=np.array([np.r_[np.ones(len(self.horizons)), 0.]]),
+                             b_eq=[1.], bounds=([(0., 1.)] if self.weight_constraint == "simplex" else [(-1., 1.)]) * len(self.horizons) + [(None, None)],
+                             method='highs')
+            if not result.success:
+                raise RuntimeError(f'Reward separation failed: {result.message}')
+            # 仅在非负模式清理微小负数；有符号模式保留负权，再确保和为 1。
+            self.weights = (np.maximum(result.x[:-1], 0.) if self.weight_constraint == "simplex"
+                            else result.x[:-1].copy())
+            self.weights /= self.weights.sum()
+            # 这里的 oracle 只是遍历有限策略库的精确最优响应，不是偷看未来的交易者。
+            scores = mu @ self.weights
+            best_idx = int(np.argmax(scores))
+            margin = float(result.x[-1])
+            oracle_gap = float(expert @ self.weights - scores[best_idx])
+            history.append(dict(iteration=iteration, margin=margin, oracle_policy=best_idx,
+                                expert_minus_oracle=oracle_gap, weights=self.weights.tolist()))
+            # 约束子集的最优间隔是上界，完整库的实际间隔是当前权重的下界。
+            # 两者相等才说明无需再加约束；即使它们均为负，也可能正常收敛。
+            if margin - oracle_gap <= tolerance:
+                converged = True
+                break
+            visited.append(mu[best_idx])
+        # 专家可表示要求其得分不低于库内最优策略；负间隔应如实暴露，不能宣传成成功匹配。
+        self.diagnostics = dict(method='finite_policy_apprenticeship', converged=converged,
+                                expert_index=int(expert_idx), policy_names=policy_names,
+                                weight_constraint=self.weight_constraint, definition=self.definition,
+                                deduct_cost=self.deduct_cost,
+                                expert_representable=bool(history[-1]['expert_minus_oracle'] >= -tolerance),
+                                final_margin=history[-1]['margin'],
+                                expectations=mu.tolist(), history=history,
+                                note='Finite executable policy library; reward is not uniquely identified.')
         return self.weights
 
-    def compute_model_expectation(self, pred: float, future_rets: np.ndarray) -> float:
+    def features(self, future_returns, side=1, cost_ratio=0., reference_price=None):
+        """从相对收益构造多尺度特征；支持批量 N×H 输入。
+
+        paper_price_difference 还原 Eq.(2) 的绝对价格差，不归一化、不裁剪。
+        side 对空头取反是项目的方向扩展，论文未完整规定卖单符号处理。
+        默认 PaperOE 不扣成本；deduct_cost=True 才是明确命名的 NetOE 变体。
+        账本在所有模式下均独立扣实际费用，不受奖励定义影响。
         """
-        计算模型预测期望 (Model Prediction Expectation, ME)
-        对应论文第 3.3.1 节：评估模型信号方向与未来多尺度实际价格变动的一致性
+        value = side * np.asarray(future_returns) - (cost_ratio if self.deduct_cost else 0.)
+        if self.definition == 'paper_price_difference':
+            if reference_price is None:
+                raise ValueError('Price-difference reward requires reference_price')
+            return value * reference_price
+        return value / self.scales
 
-        参数:
-            pred (float): 模型预测收益率 (符号代表方向)
-            future_rets (np.ndarray): 实际各尺度的未来收益率 [R_10, R_30, R_90]
+    def features_from_prices(self, reference_price, future_prices, side=1, cost_ratio=0.):
+        """直接按价格计算，避免 Eq.(2) 先除再乘引入不必要的舍入误差。"""
+        future_prices = np.asarray(future_prices)
+        if self.definition == 'paper_price_difference':
+            return side * (future_prices - reference_price) - (
+                cost_ratio * reference_price if self.deduct_cost else 0.)
+        return self.features(future_prices / reference_price - 1., side, cost_ratio)
 
-        返回:
-            float: ME 奖励得分
+    def score(self, features):
+        """Eq.(3) 线性加权；仅归一化变体裁剪到 [-1,1]。
+
+        价格差模式的探索系数带价格单位，不能把跨品种相同 c 当成同强度探索。
+        sum(w)=1 是论文明确约束；非负单纯形和 signed_box 的 [-1,1] 边界都是
+        项目为有限策略求解增加的约束，后者仅用于敏感性检查。
         """
-        direction = np.sign(pred)
-        # 多尺度加权期望: sum(w_k * (direction * R_k))
-        weighted_ret = np.sum(self.weights * (direction * future_rets))
-        return float(weighted_ret)
-
-    def compute_order_traded_expectation(
-        self,
-        order_side: int,
-        future_rets: np.ndarray,
-        rel_spread: float,
-        cost_ratio: float = 0.0001
-    ) -> float:
-        """
-        计算订单成交期望 (Order Traded Expectation, OE)
-        对应论文第 3.3.2 节：结合实际交易撮合成本（点差与手续费）后的实盘期望
-
-        参数:
-            order_side (int): 开仓方向 (+1 买入, -1 卖出, 0 不操作)
-            future_rets (np.ndarray): 实际各尺度的未来收益率 [R_10, R_30, R_90]
-            rel_spread (float): 当前盘口相对买卖价差
-            cost_ratio (float): 单边手续费率折算
-
-        返回:
-            float: OE 奖励得分
-        """
-        if order_side == 0:
-            return 0.0
-            
-        # 毛收益加权期望
-        gross_expectation = np.sum(self.weights * (order_side * future_rets))
-        # 扣除半点差滑点与手续费成本
-        friction = (rel_spread * 0.5) + cost_ratio
-        net_expectation = gross_expectation - friction
-        return float(net_expectation)
+        value = float(np.dot(self.weights, features))
+        return float(np.clip(value, -1., 1.)) if self.definition == 'normalized_return' else value

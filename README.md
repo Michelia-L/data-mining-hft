@@ -1,36 +1,56 @@
 # data-mining-hft
 
-高频量化交易模型在线自适应调优 (FMATO) 核心方法最小复现项目。
+FMATO 思路的课程工程实验，参考 [原论文](1679894.pdf)。**尚未复现原论文完整算法或实验数值。** 当前实现的是事件级 UCB、连续影子账户 ARS、有限策略奖励学习及美元记账，方法对照见 [论文定义与 20 项审阅处理](docs/paper_alignment.md)。
 
-## 参考论文
-- **论文**：《Auto-tuning of price prediction models for high-frequency trading via reinforcement learning》
-- **文件**：[1679894.pdf](1679894.pdf)
+**旧版回测包含前视偏差，其收益与延迟结论已撤回。** 当前版本清除跨切分标签，奖励成熟后才更新选择器，按下一事件行情成交，逐事件盯市并在期末平仓。论文未公开的策略优化器使用明确标注的有限策略近似；不宣称等价复刻原生产系统。
 
-## 数据文件
-仓库中已包含两个高频 MBP-10（买卖十档深度）订单簿全量数据集：
-- `databento_glbx.mdp3_mbp_10.parquet`：CME 标普500 E-mini 期货
-- `databento_ifeu.impact_mbp_10.parquet`：ICE 布伦特原油期货
+## 运行
 
-## 运行步骤
+推荐 Python 3.12，先创建虚拟环境：
 
-### 1. 安装依赖
 ```bash
-pip install -r requirements.txt
-```
-
-### 2. 执行回测实验
-自动完成高频数据特征提取、轻量模型库训练、IRL 多尺度奖励权重学习与在线动态选择回测：
-```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r environment-snapshot.txt
+python -m unittest discover -s tests -v
 python run_experiments.py
-```
-实验指标与结果汇总将输出至 `results/experiment_summary.json`。
-
-### 3. 生成可视化看板
-```bash
+python generate_report.py
 python generate_dashboard.py
 ```
-运行后将生成单文件交互式看板 `visualization_dashboard.html`，可在任意浏览器中直接打开查看。
 
-## 交付产物
-- **复现实验报告**：[replication_report.md](replication_report.md)（实事求是记录算法原理、回测结果及与原论文的差距缺陷）
-- **可视化看板**：[visualization_dashboard.html](visualization_dashboard.html)（网页交互式图表）
+`environment-snapshot.txt` 只是生成随仓库结果时使用的环境版本快照，不是包含全部传递依赖和平台条件的完整锁文件。其他兼容环境可以安装 `requirements.txt`；数值、模型行为与延迟可能随版本和硬件变化，实验会记录实际版本。
+
+默认对每个数据文件选取首段、中段、末段三个不重叠窗口，每窗 60,000 条原始事件。每窗按 50%/15%/15%/20% 分为训练、奖励校准、参数验证、测试；前三段尾部清除至少 90 个事件。窗口内重新拟合，测试不参与调参。每次运行固定随机种子、使用单线程，源代码和数据 SHA-256 随结果保存。
+
+快速验证可另存结果，不覆盖正式产物：
+
+```bash
+python run_experiments.py --rows 3000 --windows 1 --output /tmp/smoke.json
+python generate_report.py --input /tmp/smoke.json --output /tmp/report.md
+python generate_dashboard.py --input /tmp/smoke.json --output /tmp/dashboard.html
+```
+
+使用 `--rows`、`--windows`、`--seed` 调整实验；窗口必须不重叠。输入数据优先读取 Parquet，按批次加载请求窗口，兼容同列 CSV。只允许单一合约，按事件时间和交易所序号稳定排序。
+
+## 数据与产物
+
+- `databento_glbx.mdp3_mbp_10.parquet`：CME ES 合约订单簿事件。
+- `databento_ifeu.impact_mbp_10.parquet`：ICE Brent 合约订单簿事件。
+- [实验结果](results/experiment_summary.json)：切分时间、调参轨迹、模型诊断、策略指标、奖励消融及资金曲线。
+- [复现报告](replication_report.md)：从同一结果文件自动生成，注明实现与论文差异。
+- [离线看板](visualization_dashboard.html)：单文件，无 CDN 依赖，可切换品种和窗口。
+
+## 评估口径与论文差异
+
+- 默认 `paper_price_difference` 按 Eq.(2) 计算绝对价格差，不缩放、不裁剪。`--reward-definition normalized_return` 单独运行训练 P99 缩放、裁剪的收益率变体，建议用 `--output /tmp/normalized.json` 保存。两种奖励的数值单位与 UCB 系数含义不同。
+- Eq.(3) 明确要求权重和为 1，但没有明确要求非负。默认非负单纯形是项目假设，另报告允许负权的 SignedBox 敏感性。
+- Eq.(5) 的 OE 校准均值除以成熟订单数；零订单均值标记为未定义，优化中约定零向量。默认不扣奖励成本；NetOE 固定权重敏感性单列。账本始终扣实际成本。
+- `CausalEventUCB` 每事件选择、每成熟决策一次反馈，无成交为零。`CausalShadowARS` 使用连续影子账户与 300 个奖励到达事件窗口。两者**没有实现**论文 Algorithm 2/3 的固定期间更新与历史时间窗口重新回测，策略名已撤回 FMATO-UCBS/ARS 的等价表述。
+- 五种算法使用相同训练段与特征集，未实现论文不同历史时期/特征子集的模型库及每周更新。ME 使用共同交易门槛，不等于论文强调的 top-1/1000 极端信号协议。
+- 10/30/90 步是订单簿**事件数**，不是秒或定时快照。每窗初始资金 $100,000、固定一张合约；主动成交、期末平仓、逐事件盯市，不含排队、部分成交、冲击或保证金约束。
+- 门槛先在验证段选定，再用于校准与测试。专家、门槛、c、固定模型都保存并列候选与预先声明的消歧规则。同一短验证段反复选参存在选择过拟合，尚未实现嵌套时间验证。
+- 预测指标区分原始收益符号、门槛后的三类信号、有效信号准确率与覆盖率；逻辑回归分类 argmax 独立报告。无有效信号时准确率记为 null，而非零或满分。
+- 对比所有固定模型、验证选定模型、集成、现金、轮换、三个随机种子、八个权重消融、两个负权敏感性与一个 NetOE 敏感性。报告和看板从 schema 3 JSON 自动生成。
+- 单条预测 P50/P95 与批量耗时分开保存，不等于完整交易链路延迟。短样本不年化夏普。
+
+CME/ICE 数据不同于论文中国期货市场、品种与制度，因此当前结果不复现论文数值。文件内多个窗口可能相关，不能视为跨日独立重复，不能验证跨周泛化或证明实盘盈利。下一阶段需要多日数据、论文模型库设计、固定时间选择协议以及更真实的执行模拟。

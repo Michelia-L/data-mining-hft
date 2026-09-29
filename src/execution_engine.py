@@ -1,210 +1,314 @@
-"""
-高频交易模拟执行与回测引擎模块 (execution_engine.py)
-模拟高频挂单/吃单撮合逻辑，真实扣减买卖半点差滑点与交易所手续费，
-计算毛收益、净收益、最大回撤、夏普比率、胜率等核心量化指标。
-"""
+"""因果事件回放：下一事件成交、美元账本与多尺度延迟奖励。
 
+本模块把“选模型”“下单成交”“观察奖励”分开处理。比如第 0 步产生预测，
+默认第 1 步按当时盘口成交；ME 最早第 90 步反馈，OE 则从成交步起等待
+90 步，最早第 91 步反馈。不能因为历史文件包含后续价格就提前更新选择器。
+Account 管理资金与持仓；ExecutionEngine 管理事件时序、独立影子账户和统计。"""
+from collections import deque
 import numpy as np
-import pandas as pd
-from typing import Dict, List, Any
-from src.config import RL_CONFIG, INSTRUMENT_CONFIG, HORIZONS
-from src.model_selector import BaseSelector
-from src.irl_reward import IRLRewardLearner
+from src.config import RL_CONFIG, INSTRUMENT_CONFIG, INITIAL_CAPITAL, QUANTITY
+
+
+class Account:
+    """单个固定张数期货账户，同时最多持有一个方向的仓位。
+
+    position 为 +1/-1/0，分别表示多头、空头、空仓；quantity 才是合约张数。
+    realized_gross 记录已平仓的中间价毛盈亏，costs 记录实际成交成本；
+    trades 是完整开平仓记录，fills 是每次买或卖成交记录，两者数量不同。"""
+    def __init__(self, config, holding_period, quantity=QUANTITY):
+        """建立空仓账户。holding_period 按事件数计，turnover 是累计成交名义金额而非利润。"""
+        self.config, self.holding_period, self.quantity = config, holding_period, quantity
+        self.position = 0
+        # 连续持仓的开仓时刻与最近一次“持仓复核”时刻分开记录：
+        # entry_step 用于整笔交易持有期/盈亏，last_review_step 只控制下一次允许重新评估的时点。
+        self.last_review_step = None
+        self.realized_gross = 0.
+        self.costs = 0.
+        self.trades, self.fills = [], []
+        self.turnover = 0.
+
+    def fill(self, step, side, owner, mid, bid, ask, opening):
+        """模拟一笔主动成交并立即记成本，返回供 OE 延迟评价使用的订单记录。
+
+        side=+1 买、-1 卖；owner 是产生这笔仓位的模型索引；opening 区分开仓与退出。
+        买入用卖一加不利滑点，卖出用买一减不利滑点。成交价与中间价的差额换算
+        为美元后加单边手续费；cost_ratio 再将该美元成本除以成交时的中间价名义金额。
+        这里仅记录成交，不自行修改持仓方向，持仓由 advance/close 管理。"""
+        execution = (ask if side > 0 else bid) + side * self.config['slippage_ticks'] * self.config['tick_size']
+        # 点值乘以张数：价格差 × multiplier 才是美元盈亏。
+        multiplier = self.config['multiplier'] * self.quantity
+        # 卖出成交价低于 mid，价格差为负；再乘 side=-1 后仍是正成本。
+        cost = side * (execution - mid) * multiplier + self.config['commission_per_order'] * self.quantity
+        order = dict(step=step, side=side, owner=int(owner), mid=float(mid), price=float(execution),
+                     cost_usd=float(cost), cost_ratio=float(cost / (mid * multiplier)), opening=opening)
+        self.costs += cost
+        self.turnover += abs(execution * multiplier)
+        self.fills.append(order)
+        return order
+
+    def close(self, step, mid, bid, ask):
+        """平掉当前持仓，把一笔完整交易的毛利、双边成本和净利记入账本。
+
+        退出方向与持仓方向相反，但退出的奖励归属原开仓模型，不归属当时碰巧
+        被选择的新模型。成本已在 fill 时扣入账户，这里只汇总到交易明细，避免重复扣款。"""
+        fill = self.fill(step, -self.position, self.owner, mid, bid, ask, False)
+        # 多头涨价盈利、空头跌价盈利；毛利按中间价计，点差/滑点已计入成本。
+        gross = self.position * (mid - self.entry_mid) * self.config['multiplier'] * self.quantity
+        costs = self.entry_cost + fill['cost_usd']
+        self.realized_gross += gross
+        self.trades.append(dict(entry_step=self.entry_step, exit_step=step, direction=self.position,
+                                owner=self.owner, entry_price=self.entry_price, exit_price=fill['price'],
+                                gross_pnl_usd=float(gross), net_pnl_usd=float(gross - costs),
+                                friction_usd=float(costs), holding_events=step - self.entry_step))
+        self.position = 0
+        self.last_review_step = None
+        return fill
+
+    def advance(self, step, desired, owner, mid, bid, ask, terminal=False):
+        """用当前报价执行先前产生的交易意图，返回本事件真实发生的成交列表。
+
+        holding_period 不再是强制平仓期限，而是两次持仓复核之间的最短事件间隔。
+        在复核点之前忽略新的方向变化；到复核点时，同向信号继续持有并把下次复核
+        顺延一个 holding_period，反向或零信号则只平仓。本事件不会立即重新开仓，
+        避免“超时平仓后同方向/反方向立刻入场”造成没有经济暴露变化的重复摩擦。
+        终点仍立即强平；空仓时的非零信号可正常开仓。"""
+        fills = []
+        closed_on_review = False
+        if self.position:
+            if terminal:
+                fills.append(self.close(step, mid, bid, ask))
+            elif step - self.last_review_step >= self.holding_period:
+                if desired == self.position:
+                    # 信号未改变：延续同一笔交易，只刷新下一次允许复核的时点。
+                    self.last_review_step = step
+                else:
+                    # 反向或零信号：在复核点结束当前仓位，但不在同一事件立刻重开。
+                    fills.append(self.close(step, mid, bid, ask))
+                    closed_on_review = True
+        if not terminal and not self.position and desired and not closed_on_review:
+            order = self.fill(step, desired, owner, mid, bid, ask, True)
+            fills.append(order)
+            self.position, self.owner = desired, int(owner)
+            self.entry_step, self.entry_mid = step, mid
+            self.entry_price, self.entry_cost = order['price'], order['cost_usd']
+            self.last_review_step = step
+        return fills
+
+    def gross_equity_change(self, mid):
+        """返回已实现毛盈亏加当前持仓浮动毛盈亏，单位为美元。
+
+        用中间价盯市可以让尚未平仓的亏损进入回撤计算；调用者再扣累计实际成本。"""
+        unrealized = (self.position * (mid - self.entry_mid) * self.config['multiplier'] * self.quantity
+                      if self.position else 0.)
+        return self.realized_gross + unrealized
 
 
 class ExecutionEngine:
-    """
-    高频交易执行回测引擎
-    """
-    def __init__(self, instrument_key: str, irl_learner: IRLRewardLearner):
-        self.instrument_key = instrument_key
-        self.config = INSTRUMENT_CONFIG.get(instrument_key, INSTRUMENT_CONFIG["CME_ES"])
+    """在一段已按时间排序的行情上回放一个策略，不训练模型、不访问未来标签。"""
+    def __init__(self, instrument_key, irl_learner, threshold=None, initial_capital=INITIAL_CAPITAL,
+                 quantity=QUANTITY, latency_events=RL_CONFIG['latency_events'],
+                 holding_period=RL_CONFIG['holding_period']):
+        """设置品种、奖励学习器和执行假设。
+
+        threshold 是预测相对收益门槛；initial_capital 是本窗口起始资金；
+        quantity 是固定张数。latency_events 至少为 1，强制让信号在更晚事件执行。
+        holding_period 是两次持仓复核之间的最短事件间隔，不是固定墙钟时间；同向信号
+        在复核点续持，反向/零信号才平仓。这里仍不模拟挂单排队或保证金。"""
+        self.config = INSTRUMENT_CONFIG[instrument_key]
         self.irl_learner = irl_learner
-        self.threshold = self.config.get("trade_threshold", RL_CONFIG["trade_threshold"])
-        self.holding_period = RL_CONFIG["holding_period"]
+        self.threshold = self.config['trade_threshold'] if threshold is None else threshold
+        self.initial_capital, self.quantity = initial_capital, quantity
+        self.latency_events, self.holding_period = latency_events, holding_period
+        if latency_events < 1 or holding_period < 1 or initial_capital <= 0 or quantity <= 0 or self.threshold < 0:
+            raise ValueError('Invalid execution settings; signals must execute on a later event')
 
-    def run_backtest(
-        self,
-        selector: BaseSelector,
-        test_df: pd.DataFrame,
-        X_test: np.ndarray,
-        all_model_preds: np.ndarray
-    ) -> Dict[str, Any]:
-        """
-        在时序测试集上运行完整的在线选择与高频模拟回测
+    def run_backtest(self, selector, test_df, X_test=None, all_model_preds=None, detail=False):
+        """返回策略指标、抽样资金曲线；detail=True 时额外返回逐笔审计信息。
 
-        参数:
-            selector (BaseSelector): 策略模型选择器 (如 FMATO-ME-UCBS)
-            test_df (pd.DataFrame): 测试集行情数据 (包含买卖一档、中间价及多尺度标签)
-            X_test (np.ndarray): 测试集特征矩阵
-            all_model_preds (np.ndarray): 所有候选模型在测试集上的预测矩阵 (N, K)
+        输入 test_df 包含当前盘口和时间；all_model_preds 的形状为 N×K，
+        每列对应 selector.models 中一个已冻结模型，且每行特征本身必须因果。
+        X_test 为接口保留参数，本实现直接消费预先计算好的预测，不再重复推理。
 
-        返回:
-            Dict[str, Any]: 包含各项量化指标与净值曲线的详尽结果字典
-        """
-        n_steps = len(test_df)
-        k_models = selector.k
+        每个事件依次执行旧意图 → 结算已成熟奖励 → 逐事件盯市 → 产生新意图。
+        ME 从信号步计时，OE 从每次实际买卖成交步计时（包括退出）。ARS 的 OE
+        使用各模型独立影子账户，避免把未发生的交易或共享仓位当成独立策略业绩。
+        OE 默认不扣成本，NetOE 变体可扣该次单边成本；资金账本始终扣完整开平仓成本。
+        末尾尚未成熟的奖励不补写进选择器，也不因此丢弃末尾行情或期末平仓。"""
+        preds = np.asarray(all_model_preds, float)
+        n = len(test_df)
+        if n < 2 or preds.shape != (n, selector.k) or not np.isfinite(preds).all():
+            raise ValueError('Finite predictions aligned to at least two quotes are required')
+        mid = test_df.mid_price.to_numpy(dtype=float)
+        bid = test_df.bid_px_00.to_numpy(dtype=float)
+        ask = test_df.ask_px_00.to_numpy(dtype=float)
+        if (not np.isfinite(np.c_[mid, bid, ask]).all() or (bid <= 0).any()
+                or (ask < bid).any() or not test_df.ts_event.is_monotonic_increasing):
+            raise ValueError('Invalid or unordered quotes')
+        hs = np.asarray(self.irl_learner.horizons, int)
+        horizon = int(hs.max())
+        account = Account(self.config, self.holding_period, self.quantity)
+        shadows = ([Account(self.config, self.holding_period, self.quantity) for _ in range(selector.k)]
+                   if selector.needs_shadow and selector.reward_type == 'OE' else [])
+        # 实际账户与影子账户的成交分开排队，不能混淆奖励归属或重复更新。
+        live_pending, shadow_pending = deque(), deque()
+        # EventUCB 的一次拉臂对应一次决策，而不是一笔成交。将该决策触发的全部
+        # 成交绑在一起等待成熟；没有成交也有一条零反馈，避免“探索了却永不观测”。
+        decision_pending = deque()
+        # intents 保存每步目标方向，owners 保存当时的模型，以便延迟执行/延迟反馈。
+        intents, owners = [], []
+        feature_sum = np.zeros(len(hs))
+        matured_orders = 0
+        gross_values, net_values = [], []
+        reward_observations = []
 
-        mid_prices = test_df['mid_price'].values
-        spreads = test_df['spread'].values
-        rel_spreads = test_df['rel_spread'].values
+        def mature(queue, t, update, collect=False):
+            """取出当前事件 t 已具备全部未来观察价格的成交，计算并分配奖励。
 
-        # 提取多尺度真实未来收益率矩阵用于反馈奖励
-        future_rets_matrix = test_df[[f'future_ret_{h}' for h in HORIZONS]].values
+            queue 按成交时间先进先出；所有成交等待同样的最长时域，因此检查队首即可。
+            update 控制是否反馈给选择器；collect 控制是否累积本账户的特征期望。
+            即使正在 ME 回放，也收集本账户 OE 特征，用于后续校准段比较不同奖励定义。"""
+            nonlocal matured_orders
+            while queue and queue[0]['step'] + horizon <= t:
+                order = queue.popleft()
+                start = order['step']
+                # 已由队首条件保证 start+max(hs)<=t，此处每个索引都不超过当前事件。
+                features = self.irl_learner.features_from_prices(
+                    mid[start], mid[start + hs], order['side'], order['cost_ratio'])
+                if collect:
+                    feature_sum[:] += features
+                    matured_orders += 1
+                if update:
+                    reward = self.irl_learner.score(features)
+                    selector.observe(order['owner'], reward, t)
+                    if detail:
+                        reward_observations.append(dict(origin_step=start, observed_step=t,
+                                                        owner=order['owner'], reward=reward, kind='OE'))
 
-        # 交易与持仓状态记录
-        current_pos = 0        # 当前持仓: +1 多头, -1 空头, 0 空仓
-        entry_price = 0.0      # 开仓成交中间价
-        entry_step = 0         # 开仓时步
-        entry_friction = 0.0   # 开仓滑点与手续费成本
+        for t in range(n):
+            # 第一步：执行旧决策。t=0 时还没有历史意图，默认空仓。
+            source = t - self.latency_events
+            terminal = t == n - 1
+            desired = intents[source] if source >= 0 else 0
+            owner = owners[source] if source >= 0 else 0
+            fills = account.advance(t, desired, owner, mid[t], bid[t], ask[t], terminal)
+            live_pending.extend(fills)
+            if source >= 0 and not terminal and selector.reward_type == 'OE' and not shadows:
+                decision_pending.append((t, source, owner, fills))
+            # 每个影子账户只跟随自己的模型，独立承担相同的延迟、持仓限制和成交成本。
+            for i, shadow in enumerate(shadows):
+                signal = preds[source, i] if source >= 0 else 0.
+                direction = int(signal > self.threshold) - int(signal < -self.threshold)
+                shadow_pending.extend(shadow.advance(t, direction, i, mid[t], bid[t], ask[t], terminal))
 
-        # 逐笔交易收益与时序净值追踪
-        trades = []            # 完成平仓的逐笔交易明细
-        gross_cum_ret = 0.0    # 累计毛收益
-        net_cum_ret = 0.0      # 累计净收益
-        
-        gross_curve = [0.0]    # 毛收益净值曲线
-        net_curve = [0.0]      # 净收益净值曲线
-        timestamps = [str(test_df['ts_event'].iloc[0])]
+            # 第二步：只将现在已经到期的奖励送入选择器；然后才允许本事件的新选择。
+            mature(live_pending, t, False, collect=True)
+            mature(shadow_pending, t, bool(shadows))
+            while decision_pending and decision_pending[0][0] + horizon <= t:
+                executed, origin, decision_owner, decision_fills = decision_pending.popleft()
+                # 这里归属触发成交的决策模型；Account 中平仓盈亏仍归属原开仓者。
+                # 不把奖励归属与资金归属混用，也不把每事件零奖励声称为 Eq.(5)。
+                vectors = [self.irl_learner.features_from_prices(
+                    mid[executed], mid[executed + hs], f['side'], f['cost_ratio'])
+                    for f in decision_fills]
+                reward = self.irl_learner.score(np.mean(vectors, axis=0)) if vectors else 0.
+                selector.observe(decision_owner, reward, t)
+                if detail:
+                    reward_observations.append(dict(origin_step=origin, executed_step=executed,
+                        observed_step=t, owner=decision_owner, reward=reward,
+                        fill_count=len(decision_fills), kind='OE-event'))
+            if selector.reward_type == 'ME' and t >= horizon:
+                start = t - horizon
+                # ARS 可评价各模型的历史信号；UCB 只评价当时实际选中的模型。
+                indices = range(selector.k) if selector.needs_shadow else [owners[start]]
+                for idx in indices:
+                    signal = (0. if selector.flat else float(preds[start].mean()) if selector.ensemble
+                              else preds[start, idx])
+                    direction = int(signal > self.threshold) - int(signal < -self.threshold)
+                    # ME 使用与执行相同的信号门槛。影子 ARS 平均有效信号；EventUCB
+                    # 每决策一次观测，因此非交易信号反馈零。这是两个不同的平均口径。
+                    if selector.needs_shadow and direction == 0:
+                        continue
+                    reward = self.irl_learner.score(self.irl_learner.features_from_prices(
+                        mid[start], mid[start + hs], direction))
+                    selector.observe(idx, reward, t)
+                    if detail:
+                        reward_observations.append(dict(origin_step=start, observed_step=t,
+                                                        owner=int(idx), reward=reward, kind='ME'))
 
-        # 单边手续费折算比例
-        cost_ratio = self.config["commission_per_order"] / (mid_prices[0] * self.config["multiplier"])
+            # 第三步：每条行情都盯市。账户成本已包含开仓费用，即使尚未平仓也必须扣除。
+            gross = account.gross_equity_change(mid[t])
+            gross_values.append(gross)
+            net_values.append(gross - account.costs)
+            # 第四步：用成熟反馈选模型，新意图只能在后续事件成交；末事件不再发新意图。
+            if not terminal:
+                idx = selector.select_model(t)
+                signal = 0. if selector.flat else float(preds[t].mean()) if selector.ensemble else preds[t, idx]
+                intents.append(int(signal > self.threshold) - int(signal < -self.threshold))
+                owners.append(idx)
 
-        # 逐 tick 模拟撮合推进
-        for t in range(n_steps - max(HORIZONS)):
-            # 1. 选择器做出动作决策 (选择模型)
-            chosen_idx = selector.select_model(t)
-
-            # 2. 获取预测信号
-            if selector.name == "Baseline-Static-Ensemble":
-                pred_signal = float(np.mean(all_model_preds[t, :]))
-            else:
-                pred_signal = float(all_model_preds[t, chosen_idx])
-
-            # 3. 产生交易意图方向
-            desired_pos = 0
-            if pred_signal > self.threshold:
-                desired_pos = 1
-            elif pred_signal < -self.threshold:
-                desired_pos = -1
-
-            # 4. 持仓超时或收到反向信号时平仓
-            holding_time = t - entry_step
-            need_close = (current_pos != 0) and (
-                (holding_time >= self.holding_period) or 
-                (desired_pos != 0 and desired_pos != current_pos)
-            )
-
-            if need_close:
-                # 平仓结算: 扣除卖方半点差与手续费
-                exit_price = mid_prices[t]
-                exit_friction = (rel_spreads[t] * 0.5) + cost_ratio
-                
-                # 计算单笔毛收益率与净收益率
-                raw_ret = (exit_price - entry_price) / entry_price if current_pos == 1 else (entry_price - exit_price) / entry_price
-                trade_gross = raw_ret
-                trade_friction = entry_friction + exit_friction
-                trade_net = trade_gross - trade_friction
-
-                gross_cum_ret += trade_gross
-                net_cum_ret += trade_net
-
-                trades.append({
-                    "entry_step": entry_step,
-                    "exit_step": t,
-                    "direction": current_pos,
-                    "gross_pnl": trade_gross,
-                    "net_pnl": trade_net,
-                    "friction": trade_friction,
-                    "holding_ticks": holding_time,
-                })
-                current_pos = 0
-
-            # 5. 若当前空仓且有有效交易信号，执行开仓
-            if current_pos == 0 and desired_pos != 0:
-                current_pos = desired_pos
-                entry_price = mid_prices[t]
-                entry_step = t
-                entry_friction = (rel_spreads[t] * 0.5) + cost_ratio
-
-            # 6. 计算强化学习反馈奖励并更新选择器
-            curr_future_rets = future_rets_matrix[t]
-            
-            # 计算当前选定模型的即时奖励
-            if selector.reward_type == "ME":
-                # 模型预测期望奖励
-                r_t = self.irl_learner.compute_model_expectation(pred_signal, curr_future_rets)
-            else:
-                # 订单成交期望奖励
-                r_t = self.irl_learner.compute_order_traded_expectation(
-                    desired_pos, curr_future_rets, rel_spreads[t], cost_ratio
-                )
-
-            # 同时为 ARS 影子回测计算所有模型的即时奖励
-            all_r_t = np.zeros(k_models)
-            for m_i in range(k_models):
-                p_i = float(all_model_preds[t, m_i])
-                if selector.reward_type == "ME":
-                    all_r_t[m_i] = self.irl_learner.compute_model_expectation(p_i, curr_future_rets)
-                else:
-                    d_i = 1 if p_i > self.threshold else (-1 if p_i < -self.threshold else 0)
-                    all_r_t[m_i] = self.irl_learner.compute_order_traded_expectation(
-                        d_i, curr_future_rets, rel_spreads[t], cost_ratio
-                    )
-
-            # 更新在线选择器
-            selector.update_reward(chosen_idx, r_t, all_r_t)
-
-            # 定期采样净值曲线点 (每 50 ticks 记录一个点，避免前端图表数据过载)
-            if t % 50 == 0:
-                gross_curve.append(float(gross_cum_ret))
-                net_curve.append(float(net_cum_ret))
-                timestamps.append(str(test_df['ts_event'].iloc[t]))
-
-        # 统计回测核心指标
-        total_trades = len(trades)
-        if total_trades > 0:
-            trade_nets = [tr["net_pnl"] for tr in trades]
-            trade_grosses = [tr["gross_pnl"] for tr in trades]
-            
-            win_trades = [p for p in trade_nets if p > 0]
-            loss_trades = [p for p in trade_nets if p <= 0]
-            
-            win_rate = len(win_trades) / total_trades
-            avg_win = float(np.mean(win_trades)) if win_trades else 0.0
-            avg_loss = abs(float(np.mean(loss_trades))) if loss_trades else 1e-6
-            pl_ratio = avg_win / avg_loss
-            
-            # 最大回撤 (MDD) 计算
-            cum_arr = np.array(net_curve)
-            running_max = np.maximum.accumulate(cum_arr)
-            drawdowns = running_max - cum_arr
-            mdd = float(np.max(drawdowns)) if len(drawdowns) > 0 else 0.0
-            
-            # 年化/步长夏普比率 (基于逐笔净收益)
-            std_net = float(np.std(trade_nets))
-            sharpe = (float(np.mean(trade_nets)) / (std_net + 1e-8)) * np.sqrt(252 * 1000)
-            
-            total_friction = sum(tr["friction"] for tr in trades)
-        else:
-            win_rate = 0.0
-            pl_ratio = 0.0
-            mdd = 0.0
-            sharpe = 0.0
-            total_friction = 0.0
-
-        return {
-            "strategy": selector.name,
-            "total_trades": total_trades,
-            "win_rate": round(float(win_rate), 4),
-            "pl_ratio": round(float(pl_ratio), 2),
-            "gross_return": round(float(gross_cum_ret), 4),
-            "net_return": round(float(net_cum_ret), 4),
-            "total_friction": round(float(total_friction), 4),
-            "max_drawdown": round(float(mdd), 4),
-            "sharpe_ratio": round(float(sharpe), 2),
-            "action_distribution": selector.get_selection_distribution(),
-            "gross_curve": gross_curve,
-            "net_curve": net_curve,
-            "timestamps": timestamps,
-        }
+        gross_array, net_array = np.asarray(gross_values), np.asarray(net_values)
+        # 将初始资金点也纳入峰值，确保第一笔手续费立即造成的回撤不会被遗漏。
+        equity = np.r_[self.initial_capital, self.initial_capital + net_array]
+        peaks = np.maximum.accumulate(equity)
+        drawdowns = (peaks - equity) / peaks
+        trade_nets = np.array([x['net_pnl_usd'] for x in account.trades], dtype=float)
+        trade_grosses = np.array([x['gross_pnl_usd'] for x in account.trades], dtype=float)
+        trade_frictions = np.array([x['friction_usd'] for x in account.trades], dtype=float)
+        holding_events = np.array([x['holding_events'] for x in account.trades], dtype=float)
+        gross_winning_trades = int(np.sum(trade_grosses > 0))
+        net_winning_trades = int(np.sum(trade_nets > 0))
+        wins, losses = trade_nets[trade_nets > 0], trade_nets[trade_nets < 0]
+        # 风险指标已经用全部事件算完；以下仅为展示抽样，并显式保留首尾点。
+        points = sorted(set([0, n - 1] + list(range(0, n, max(1, n // 300)))))
+        # *_usd 为美元，*_return 以初始资金为分母；max_drawdown 以历史资金峰值为分母。
+        # 短区间无法构造独立日收益，夏普返回 None，不假定每天固定交易次数来年化。
+        # Eq.(5) 分母是成熟订单数 M，绝不是行情事件数。M=0 没有可估计均值；
+        # 为让现金策略参加有限策略优化，约定零向量，同时记录 defined=False。
+        # 每事件暴露另列，不能再以 order_feature_expectation 名称混用。
+        result = dict(
+            strategy=selector.name, total_trades=len(account.trades), total_fills=len(account.fills),
+            initial_capital=self.initial_capital, quantity=self.quantity,
+            gross_pnl_usd=float(gross_array[-1]), net_pnl_usd=float(net_array[-1]),
+            friction_usd=float(account.costs), gross_return=float(gross_array[-1] / self.initial_capital),
+            net_return=float(net_array[-1] / self.initial_capital),
+            total_friction=float(account.costs / self.initial_capital),
+            max_drawdown=float(drawdowns.max()), max_drawdown_usd=float((peaks - equity).max()),
+            sharpe_ratio=None, sharpe_reason='Insufficient independent daily observations; no annualization.',
+            # 没有完整交易时分母为零，胜率与持仓分位数未定义；JSON 用 null。
+            # gross/net 胜率分开报告，便于识别“方向/价格移动正确但不足以覆盖交易摩擦”的情形。
+            gross_win_rate=float(gross_winning_trades / len(trade_nets)) if len(trade_nets) else None,
+            net_win_rate=float(net_winning_trades / len(trade_nets)) if len(trade_nets) else None,
+            # 保留 win_rate 作为旧输出兼容别名，其含义始终是扣除交易摩擦后的净胜率。
+            win_rate=float(net_winning_trades / len(trade_nets)) if len(trade_nets) else None,
+            gross_winning_trades=gross_winning_trades,
+            net_winning_trades=net_winning_trades,
+            pl_ratio=float(wins.mean() / -losses.mean()) if len(wins) and len(losses) else None,
+            avg_trade_gross_usd=float(trade_grosses.mean()) if len(trade_grosses) else 0.,
+            avg_trade_friction_usd=float(trade_frictions.mean()) if len(trade_frictions) else 0.,
+            avg_trade_net_usd=float(trade_nets.mean()) if len(trade_nets) else 0.,
+            holding_events_mean=float(holding_events.mean()) if len(holding_events) else None,
+            holding_events_median=float(np.median(holding_events)) if len(holding_events) else None,
+            holding_events_p90=float(np.quantile(holding_events, .9)) if len(holding_events) else None,
+            turnover_notional_usd=float(account.turnover),
+            action_distribution=selector.get_selection_distribution(),
+            gross_curve=(gross_array[points] / self.initial_capital).tolist(),
+            net_curve=(net_array[points] / self.initial_capital).tolist(),
+            timestamps=[str(test_df.ts_event.iloc[t]) for t in points], curve_steps=points,
+            terminal_position=account.position, matured_order_count=matured_orders,
+            unmatured_fill_rewards_at_end=len(live_pending),
+            order_feature_expectation=(feature_sum / matured_orders if matured_orders else feature_sum).tolist(),
+            order_feature_expectation_defined=bool(matured_orders),
+            event_feature_exposure=(feature_sum / n).tolist(),
+            reward_definition=self.irl_learner.definition,
+            reward_cost_mode='NetOE' if self.irl_learner.deduct_cost else 'PaperOE-no-cost',
+            reward_horizon_unit='events',
+            selector_window_events=getattr(selector, 'window_events', None),
+            decision_count=len(selector.action_history),
+            feedback_counts=(selector.feedback_counts.tolist() if hasattr(selector, 'feedback_counts') else None),
+            observed_rewards=len(selector.reward_history),
+        )
+        if detail:
+            result.update(trades=account.trades, fills=account.fills,
+                          actions=selector.action_history, reward_observations=reward_observations,
+                          equity_usd=(self.initial_capital + net_array).tolist())
+        return result
