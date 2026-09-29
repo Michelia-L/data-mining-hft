@@ -19,6 +19,9 @@ class Account:
         """建立空仓账户。holding_period 按事件数计，turnover 是累计成交名义金额而非利润。"""
         self.config, self.holding_period, self.quantity = config, holding_period, quantity
         self.position = 0
+        # 连续持仓的开仓时刻与最近一次“持仓复核”时刻分开记录：
+        # entry_step 用于整笔交易持有期/盈亏，last_review_step 只控制下一次允许重新评估的时点。
+        self.last_review_step = None
         self.realized_gross = 0.
         self.costs = 0.
         self.trades, self.fills = [], []
@@ -58,24 +61,37 @@ class Account:
                                 gross_pnl_usd=float(gross), net_pnl_usd=float(gross - costs),
                                 friction_usd=float(costs), holding_events=step - self.entry_step))
         self.position = 0
+        self.last_review_step = None
         return fill
 
     def advance(self, step, desired, owner, mid, bid, ask, terminal=False):
         """用当前报价执行先前产生的交易意图，返回本事件真实发生的成交列表。
 
-        持仓超时、出现非零反向信号或到达终点时先平仓；非终点且空仓时才允许开仓。
-        零信号表示不新开仓，不表示立即平掉已有仓位；同向信号也不会不断加仓。
-        反向信号可能在本事件先平后开，形成两笔成交；终点则只平仓，绝不重新开仓。"""
+        holding_period 不再是强制平仓期限，而是两次持仓复核之间的最短事件间隔。
+        在复核点之前忽略新的方向变化；到复核点时，同向信号继续持有并把下次复核
+        顺延一个 holding_period，反向或零信号则只平仓。本事件不会立即重新开仓，
+        避免“超时平仓后同方向/反方向立刻入场”造成没有经济暴露变化的重复摩擦。
+        终点仍立即强平；空仓时的非零信号可正常开仓。"""
         fills = []
-        if self.position and (terminal or step - self.entry_step >= self.holding_period
-                              or (desired and desired != self.position)):
-            fills.append(self.close(step, mid, bid, ask))
-        if not terminal and not self.position and desired:
+        closed_on_review = False
+        if self.position:
+            if terminal:
+                fills.append(self.close(step, mid, bid, ask))
+            elif step - self.last_review_step >= self.holding_period:
+                if desired == self.position:
+                    # 信号未改变：延续同一笔交易，只刷新下一次允许复核的时点。
+                    self.last_review_step = step
+                else:
+                    # 反向或零信号：在复核点结束当前仓位，但不在同一事件立刻重开。
+                    fills.append(self.close(step, mid, bid, ask))
+                    closed_on_review = True
+        if not terminal and not self.position and desired and not closed_on_review:
             order = self.fill(step, desired, owner, mid, bid, ask, True)
             fills.append(order)
             self.position, self.owner = desired, int(owner)
             self.entry_step, self.entry_mid = step, mid
             self.entry_price, self.entry_cost = order['price'], order['cost_usd']
+            self.last_review_step = step
         return fills
 
     def gross_equity_change(self, mid):
@@ -96,7 +112,8 @@ class ExecutionEngine:
 
         threshold 是预测相对收益门槛；initial_capital 是本窗口起始资金；
         quantity 是固定张数。latency_events 至少为 1，强制让信号在更晚事件执行。
-        holding_period 是事件步数上限，不是固定墙钟时间，也不模拟挂单排队或保证金。"""
+        holding_period 是两次持仓复核之间的最短事件间隔，不是固定墙钟时间；同向信号
+        在复核点续持，反向/零信号才平仓。这里仍不模拟挂单排队或保证金。"""
         self.config = INSTRUMENT_CONFIG[instrument_key]
         self.irl_learner = irl_learner
         self.threshold = self.config['trade_threshold'] if threshold is None else threshold

@@ -40,7 +40,7 @@ INSTRUMENT_CONFIG = {
                       multiplier=1000.0, commission_per_order=1.50,
                       slippage_ticks=0.5, trade_threshold=0.00006),
 }
-# ucb_c 控制探索；ars_window_events 按奖励到达的事件步计时；holding_period 是持仓事件上限。
+# ucb_c 控制探索；ars_window_events 按奖励到达的事件步计时；holding_period 是两次持仓复核的最短事件间隔。
 # latency_events=1 表示本步决策下一条行情执行，不代表固定一秒网络延迟。
 RL_CONFIG = dict(ucb_c=0.1, ars_window_events=300, holding_period=30, latency_events=1)
 # 只在验证段比较这些探索系数，不能根据测试净收益回头选择。

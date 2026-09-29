@@ -134,6 +134,33 @@ class CausalityTests(unittest.TestCase):
         result = replay(quotes(np.linspace(100, 102, 230)), CausalShadowARSSelector('test', MODELS, 'OE'))
         self.assertEqual({o['owner'] for o in result['reward_observations']}, {0, 1})
 
+    def test_timeout_same_direction_renews_without_churn(self):
+        """同向信号到复核点只续持，不能机械平仓再开仓重复支付成本。"""
+        result = replay(quotes(np.ones(12) * 100), holding_period=3,
+                        preds=np.ones((12, 2)) * .001)
+        self.assertEqual(result['total_trades'], 1)
+        self.assertEqual(result['total_fills'], 2)
+        self.assertEqual([f['step'] for f in result['fills']], [1, 11])
+        self.assertEqual(result['trades'][0]['holding_events'], 10)
+
+    def test_timeout_zero_signal_closes_at_review(self):
+        """复核点信号变零时结束仓位，之后保持空仓。"""
+        predictions = np.ones((12, 2)) * .001
+        predictions[3:, 0] = 0.
+        result = replay(quotes(np.ones(12) * 100), holding_period=3, preds=predictions)
+        self.assertEqual(result['total_trades'], 1)
+        self.assertEqual([(f['step'], f['opening']) for f in result['fills']], [(1, True), (4, False)])
+
+    def test_timeout_reversal_reenters_on_next_event(self):
+        """复核点反向时只平旧仓；若反向信号持续，最早下一事件才建立新仓。"""
+        predictions = np.ones((12, 2)) * .001
+        predictions[3:, 0] = -.001
+        result = replay(quotes(np.ones(12) * 100), holding_period=3, preds=predictions)
+        around_review = [(f['step'], f['opening'], f['side']) for f in result['fills']
+                         if f['step'] in (4, 5)]
+        self.assertEqual(around_review, [(4, False, -1), (5, True, -1)])
+        self.assertEqual(result['trades'][0]['exit_step'], 4)
+
     def test_next_event_execution_uses_later_quote(self):
         """价格逐步跳涨时，第一笔必须在第 1 步按 101.25 成交，而不能使用第 0 步旧价。"""
         result = replay(quotes([100, 101, 102, 103]), holding_period=100)
