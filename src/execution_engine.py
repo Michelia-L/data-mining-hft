@@ -251,7 +251,12 @@ class ExecutionEngine:
         equity = np.r_[self.initial_capital, self.initial_capital + net_array]
         peaks = np.maximum.accumulate(equity)
         drawdowns = (peaks - equity) / peaks
-        trade_nets = np.array([x['net_pnl_usd'] for x in account.trades])
+        trade_nets = np.array([x['net_pnl_usd'] for x in account.trades], dtype=float)
+        trade_grosses = np.array([x['gross_pnl_usd'] for x in account.trades], dtype=float)
+        trade_frictions = np.array([x['friction_usd'] for x in account.trades], dtype=float)
+        holding_events = np.array([x['holding_events'] for x in account.trades], dtype=float)
+        gross_winning_trades = int(np.sum(trade_grosses > 0))
+        net_winning_trades = int(np.sum(trade_nets > 0))
         wins, losses = trade_nets[trade_nets > 0], trade_nets[trade_nets < 0]
         # 风险指标已经用全部事件算完；以下仅为展示抽样，并显式保留首尾点。
         points = sorted(set([0, n - 1] + list(range(0, n, max(1, n // 300)))))
@@ -269,10 +274,21 @@ class ExecutionEngine:
             total_friction=float(account.costs / self.initial_capital),
             max_drawdown=float(drawdowns.max()), max_drawdown_usd=float((peaks - equity).max()),
             sharpe_ratio=None, sharpe_reason='Insufficient independent daily observations; no annualization.',
-            # 没有完整交易时分母为零，胜率未定义；JSON 用 null，展示层显示 N/A。
-            win_rate=float(len(wins) / len(trade_nets)) if len(trade_nets) else None,
+            # 没有完整交易时分母为零，胜率与持仓分位数未定义；JSON 用 null。
+            # gross/net 胜率分开报告，便于识别“方向/价格移动正确但不足以覆盖交易摩擦”的情形。
+            gross_win_rate=float(gross_winning_trades / len(trade_nets)) if len(trade_nets) else None,
+            net_win_rate=float(net_winning_trades / len(trade_nets)) if len(trade_nets) else None,
+            # 保留 win_rate 作为旧输出兼容别名，其含义始终是扣除交易摩擦后的净胜率。
+            win_rate=float(net_winning_trades / len(trade_nets)) if len(trade_nets) else None,
+            gross_winning_trades=gross_winning_trades,
+            net_winning_trades=net_winning_trades,
             pl_ratio=float(wins.mean() / -losses.mean()) if len(wins) and len(losses) else None,
+            avg_trade_gross_usd=float(trade_grosses.mean()) if len(trade_grosses) else 0.,
+            avg_trade_friction_usd=float(trade_frictions.mean()) if len(trade_frictions) else 0.,
             avg_trade_net_usd=float(trade_nets.mean()) if len(trade_nets) else 0.,
+            holding_events_mean=float(holding_events.mean()) if len(holding_events) else None,
+            holding_events_median=float(np.median(holding_events)) if len(holding_events) else None,
+            holding_events_p90=float(np.quantile(holding_events, .9)) if len(holding_events) else None,
             turnover_notional_usd=float(account.turnover),
             action_distribution=selector.get_selection_distribution(),
             gross_curve=(gross_array[points] / self.initial_capital).tolist(),

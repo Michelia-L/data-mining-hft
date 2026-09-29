@@ -180,9 +180,28 @@ class AccountingTests(unittest.TestCase):
         self.assertAlmostEqual(result['friction_usd'], 27.5)
         self.assertAlmostEqual(result['net_pnl_usd'], -27.5)
         self.assertEqual(result['gross_pnl_usd'], 0)
+        self.assertEqual(result['avg_trade_gross_usd'], 0.)
+        self.assertAlmostEqual(result['avg_trade_friction_usd'], 27.5)
+        self.assertEqual(result['gross_win_rate'], 0.)
+        self.assertEqual(result['net_win_rate'], 0.)
+        self.assertEqual(result['holding_events_mean'], 8.)
+        self.assertEqual(result['holding_events_median'], 8.)
+        self.assertEqual(result['holding_events_p90'], 8.)
         self.assertAlmostEqual(result['net_return'], -27.5 / 100000)
         self.assertEqual(result['net_curve'][-1], result['net_return'])
         self.assertIsNone(result['sharpe_ratio'])
+
+    def test_gross_and_net_win_rates_are_separate(self):
+        """价格方向可盈利但不足以覆盖摩擦时，毛胜率和净胜率必须明确分开。"""
+        result = replay(quotes([100, 100, 100.5, 100.5]), holding_period=100)
+        self.assertEqual(result['total_trades'], 1)
+        self.assertAlmostEqual(result['gross_pnl_usd'], 25.)
+        self.assertAlmostEqual(result['friction_usd'], 27.5)
+        self.assertAlmostEqual(result['net_pnl_usd'], -2.5)
+        self.assertEqual(result['gross_win_rate'], 1.)
+        self.assertEqual(result['net_win_rate'], 0.)
+        self.assertEqual(result['gross_winning_trades'], 1)
+        self.assertEqual(result['net_winning_trades'], 0)
 
     def test_quantity_scales_dollars_not_price_return(self):
         """三张合约的美元成本和盈亏都应是一张的三倍，验证乘数与张数使用一致。"""

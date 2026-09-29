@@ -128,7 +128,8 @@ def gated_me_expectation(learner, reference_prices, future_prices, signal, thres
     return features.mean(axis=0), int(active.sum())
 
 
-def run_window(key, path, offset, rows, seed, reward_definition="paper_price_difference"):
+def run_window(key, path, offset, rows, seed, reward_definition="paper_price_difference",
+               holding_period=RL_CONFIG['holding_period']):
     """完成一个原始数据窗口的独立实验，返回可序列化的详细结果。
 
     key 为品种配置键，path 为行情文件，offset/rows 按原始行定位窗口，
@@ -152,7 +153,7 @@ def run_window(key, path, offset, rows, seed, reward_definition="paper_price_dif
     validation = split['validation_df']
     tuning = []
     for threshold in [base_threshold * x for x in (1, 2, 4)]:
-        engine = ExecutionEngine(key, base_reward, threshold=threshold)
+        engine = ExecutionEngine(key, base_reward, threshold=threshold, holding_period=holding_period)
         result = engine.run_backtest(EnsembleSelector('validation', models), validation,
                                      all_model_preds=predictions['validation'])
         tuning.append(dict(threshold=threshold, net_pnl_usd=result['net_pnl_usd']))
@@ -162,7 +163,7 @@ def run_window(key, path, offset, rows, seed, reward_definition="paper_price_dif
 
     # 阶段二：只在校准段回放可执行策略；专家按实际扣费后的美元盈亏选取。
     calibration = split['calibration_df']
-    cal_engine = ExecutionEngine(key, base_reward, threshold=threshold)
+    cal_engine = ExecutionEngine(key, base_reward, threshold=threshold, holding_period=holding_period)
     cal_selectors = static_selectors(models)
     calibration_results = [cal_engine.run_backtest(s, calibration,
                            all_model_preds=predictions['calibration']) for s in cal_selectors]
@@ -195,7 +196,7 @@ def run_window(key, path, offset, rows, seed, reward_definition="paper_price_dif
     for reward_type in ('ME', 'OE'):
         trials = []
         for c in UCB_CANDIDATES:
-            engine = ExecutionEngine(key, rewards[reward_type], threshold=threshold)
+            engine = ExecutionEngine(key, rewards[reward_type], threshold=threshold, holding_period=holding_period)
             result = engine.run_backtest(CausalEventUCBSelector('validation', models, reward_type, c), validation,
                                          all_model_preds=predictions['validation'])
             trials.append(dict(c=c, net_pnl_usd=result['net_pnl_usd']))
@@ -206,7 +207,7 @@ def run_window(key, path, offset, rows, seed, reward_definition="paper_price_dif
     # “最佳固定模型”也必须由验证段选出，不能事后挑测试表现最好的模型当基线。
     val_fixed = []
     for i, model in enumerate(models):
-        result = ExecutionEngine(key, rewards['ME'], threshold=threshold).run_backtest(
+        result = ExecutionEngine(key, rewards['ME'], threshold=threshold, holding_period=holding_period).run_backtest(
             SingleModelSelector('validation', models, i), validation, all_model_preds=predictions['validation'])
         val_fixed.append(result['net_pnl_usd'])
     fixed_choice = select_with_ties(val_fixed, [m.name for m in models])
@@ -219,7 +220,7 @@ def run_window(key, path, offset, rows, seed, reward_definition="paper_price_dif
     selectors += [RandomSelector(f'Baseline-Random-seed-{s}', models, s) for s in (seed + 1, seed + 2)]
     results = []
     for selector in selectors:
-        result = ExecutionEngine(key, rewards[selector.reward_type], threshold=threshold).run_backtest(
+        result = ExecutionEngine(key, rewards[selector.reward_type], threshold=threshold, holding_period=holding_period).run_backtest(
             selector, test, all_model_preds=predictions['test'])
         results.append(result)
     # 消融实验：固定 ARS、门槛、撮合成本与训练尺度，只改变奖励权重。
@@ -229,7 +230,7 @@ def run_window(key, path, offset, rows, seed, reward_definition="paper_price_dif
                 (f'Single-{h}', np.eye(len(HORIZON_EVENTS))[i]) for i, h in enumerate(HORIZON_EVENTS)]:
             learner = IRLRewardLearner(weights=weights, scales=base_reward.scales, definition=reward_definition)
             selector = CausalShadowARSSelector(f'Ablation-{reward_type}-CausalShadowARS-{name}', models, reward_type)
-            results.append(ExecutionEngine(key, learner, threshold=threshold).run_backtest(
+            results.append(ExecutionEngine(key, learner, threshold=threshold, holding_period=holding_period).run_backtest(
                 selector, test, all_model_preds=predictions['test']))
     # signed_box 只放宽权重符号、仍保留 sum(w)=1；[-1,1] 是本项目正则边界，
     # 不能称作论文规定。NetOE 只更改成本项，保留主实验权重，以隔离该因素。
@@ -240,11 +241,11 @@ def run_window(key, path, offset, rows, seed, reward_definition="paper_price_dif
         signed.fit_reward_weights(expectations, expert_idx, names)
         sensitivity[reward_type] = dict(weights=signed.weights.tolist(), diagnostics=signed.diagnostics)
         selector = CausalShadowARSSelector(f'Sensitivity-{reward_type}-SignedBox', models, reward_type)
-        results.append(ExecutionEngine(key, signed, threshold=threshold).run_backtest(
+        results.append(ExecutionEngine(key, signed, threshold=threshold, holding_period=holding_period).run_backtest(
             selector, test, all_model_preds=predictions['test']))
     net_oe = IRLRewardLearner(weights=rewards['OE'].weights, scales=base_reward.scales,
                               definition=reward_definition, deduct_cost=True)
-    results.append(ExecutionEngine(key, net_oe, threshold=threshold).run_backtest(
+    results.append(ExecutionEngine(key, net_oe, threshold=threshold, holding_period=holding_period).run_backtest(
         CausalShadowARSSelector('Sensitivity-NetOE-FixedWeights', models, 'OE'), test,
         all_model_preds=predictions['test']))
     model_eval, prediction_baselines = evaluate_models(models, predictions['test'],
@@ -264,6 +265,7 @@ def run_window(key, path, offset, rows, seed, reward_definition="paper_price_dif
                        asks=[dict(price=float(snapshot[f'ask_px_{i:02d}']),
                                   size=float(snapshot[f'ask_sz_{i:02d}'])) for i in range(5)])
     return dict(instrument=key, source_offset=offset, requested_rows=rows, sample_size=len(df), seed=seed,
+                holding_period_events=int(holding_period),
                 l2_snapshot=l2_snapshot,
                 symbol=str(df.symbol.iloc[0]), train_size=len(split['train_df']), test_size=len(test),
                 partitions=partitions, purge_events=split['purge_events'], features=features,
@@ -296,9 +298,21 @@ def aggregate(windows):
     for name in names:
         rows = [next(r for r in w['strategies'] if r['strategy'] == name) for w in windows]
         pnl = [r['net_pnl_usd'] for r in rows]
+        total_trades = sum(r['total_trades'] for r in rows)
+        gross_sum = float(sum(r['gross_pnl_usd'] for r in rows))
+        friction_sum = float(sum(r['friction_usd'] for r in rows))
+        gross_wins = sum(r['gross_winning_trades'] for r in rows)
+        net_wins = sum(r['net_winning_trades'] for r in rows)
+        holding_sum = sum((r['holding_events_mean'] or 0.) * r['total_trades'] for r in rows)
         output.append(dict(strategy=name, windows=len(rows), net_pnl_usd_sum=float(sum(pnl)),
                            net_pnl_usd_mean=float(np.mean(pnl)), net_pnl_usd_min=float(min(pnl)),
-                           net_pnl_usd_max=float(max(pnl)), total_trades=sum(r['total_trades'] for r in rows)))
+                           net_pnl_usd_max=float(max(pnl)), total_trades=total_trades,
+                           gross_pnl_usd_sum=gross_sum, friction_usd_sum=friction_sum,
+                           avg_trade_gross_usd=(gross_sum / total_trades if total_trades else 0.),
+                           avg_trade_friction_usd=(friction_sum / total_trades if total_trades else 0.),
+                           gross_win_rate=(gross_wins / total_trades if total_trades else None),
+                           net_win_rate=(net_wins / total_trades if total_trades else None),
+                           holding_events_mean=(holding_sum / total_trades if total_trades else None)))
     return output
 
 
@@ -314,10 +328,12 @@ def main():
                         default='paper_price_difference', help='Reward units; selectors remain explicit event variants')
     parser.add_argument('--windows', type=int, default=3)
     parser.add_argument('--seed', type=int, default=SEED)
+    parser.add_argument('--holding-period', type=int, default=RL_CONFIG['holding_period'],
+                        help='Minimum event interval between position reviews; all other settings stay fixed')
     parser.add_argument('--output', default=SUMMARY_JSON_PATH)
     args = parser.parse_args()
-    if args.rows < 2000 or args.windows < 1:
-        parser.error('--rows >= 2000 and --windows >= 1 are required')
+    if args.rows < 2000 or args.windows < 1 or args.holding_period < 1:
+        parser.error('--rows >= 2000, --windows >= 1 and --holding-period >= 1 are required')
     # 保存产生结果时的源码快照哈希；即使工作区还未提交，也能标识实际运行内容。
     source_files = [BASE_DIR / 'run_experiments.py'] + sorted((BASE_DIR / 'src').glob('*.py'))
     try:
@@ -331,7 +347,8 @@ def main():
                                            ['numpy', 'pandas', 'scipy', 'scikit-learn', 'pyarrow', 'threadpoolctl']},
                                  source_sha256={str(p.relative_to(BASE_DIR)): file_hash(p) for p in source_files},
                                  git_base_revision=revision, threads=1, initial_capital=INITIAL_CAPITAL,
-                                 quantity=QUANTITY, split_ratios=SPLIT_RATIOS, execution=RL_CONFIG,
+                                 quantity=QUANTITY, split_ratios=SPLIT_RATIOS,
+                                 execution=dict(RL_CONFIG, holding_period=args.holding_period),
                                  instruments=INSTRUMENT_CONFIG, ucb_candidates=UCB_CANDIDATES,
                                  scope='Disjoint windows within supplied files; not independent trading days.'),
                    experiments={})
@@ -348,7 +365,8 @@ def main():
             windows = []
             for i, offset in enumerate(offsets):
                 print(f'{key}: window {i + 1}/{args.windows}, offset={offset}', flush=True)
-                windows.append(run_window(key, path, offset, args.rows, args.seed, args.reward_definition))
+                windows.append(run_window(key, path, offset, args.rows, args.seed, args.reward_definition,
+                                          args.holding_period))
             summary['experiments'][key] = dict(source_file=Path(path).name, source_sha256=file_hash(path),
                                                source_rows=total, windows=windows, aggregate=aggregate(windows))
     out = Path(args.output)

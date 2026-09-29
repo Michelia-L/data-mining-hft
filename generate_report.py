@@ -15,6 +15,11 @@ def choice_text(choice):
             else f"选中 `{choice['selected']}`")
 
 
+def metric(value, suffix='', digits=2):
+    """把可空交易统计格式化为报告文本；无交易时保持 N/A，而不是伪造 0。"""
+    return 'N/A' if value is None else f"{value:.{digits}f}{suffix}"
+
+
 def render_report(data):
     """从同一份结果生成方法边界、文件内描述统计、逐窗诊断与选择记录。"""
     lines = ['# FMATO 思路的课程工程实验（非论文数值复现）', '',
@@ -32,15 +37,21 @@ def render_report(data):
         '- CME/ICE 的合约、市场制度、费用、更新机制不同于论文中国期货数据，未复现原论文实验数值。文件内窗口不是跨日独立重复。',
         '- 下一事件主动成交；逐事件盯市；期末平仓；每窗资金重置为 $100,000。未模拟排队、部分成交、市场冲击、保证金与端到端延迟；当前样本不足以形成独立日收益，因此不报告 Sharpe。', '',
         '## 配置与复核', '',
-        f"种子 {data['metadata']['seed']}；每品种 {data['metadata']['windows']} 个窗口；每窗 {data['metadata']['rows']:,} 条原始事件；Python {data['metadata']['python']}；计算线程 {data['metadata']['threads']}。", '',
+        f"种子 {data['metadata']['seed']}；每品种 {data['metadata']['windows']} 个窗口；每窗 {data['metadata']['rows']:,} 条原始事件；holding period {data['metadata'].get('execution', {}).get('holding_period', 'N/A')} events；Python {data['metadata']['python']}；计算线程 {data['metadata']['threads']}。", '',
         'JSON 保存数据与源码哈希、依赖实际版本、时间范围、候选分数、并列选择、奖励迭代。`environment-snapshot.txt` 是环境版本快照，不是完整依赖锁。', '']
     for key, experiment in data['experiments'].items():
         lines += [f'## {key}：文件内多窗口描述统计（非独立重复实验）', '',
             f"数据 `{experiment['source_file']}`，共 {experiment['source_rows']:,} 行。每窗账户重置，合计不是连续账户收益。", '',
-            '| 策略 | 总净盈亏 USD | 平均 | 最差窗口 | 最好窗口 | 平仓笔数 |',
-            '|---|---:|---:|---:|---:|---:|']
+            '| 策略 | 总净盈亏 USD | 平均 | 最差窗口 | 最好窗口 | 平仓笔数 | 毛胜率 | 净胜率 | 平均毛盈亏/笔 | 平均摩擦/笔 | 平均持有 events |',
+            '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|']
         for r in experiment['aggregate']:
-            lines.append(f"| {r['strategy']} | {r['net_pnl_usd_sum']:.2f} | {r['net_pnl_usd_mean']:.2f} | {r['net_pnl_usd_min']:.2f} | {r['net_pnl_usd_max']:.2f} | {r['total_trades']} |")
+            lines.append(
+                f"| {r['strategy']} | {r['net_pnl_usd_sum']:.2f} | {r['net_pnl_usd_mean']:.2f} | "
+                f"{r['net_pnl_usd_min']:.2f} | {r['net_pnl_usd_max']:.2f} | {r['total_trades']} | "
+                f"{metric(r.get('gross_win_rate'), '%', 2) if r.get('gross_win_rate') is None else metric(r['gross_win_rate'] * 100, '%', 2)} | "
+                f"{metric(r.get('net_win_rate'), '%', 2) if r.get('net_win_rate') is None else metric(r['net_win_rate'] * 100, '%', 2)} | "
+                f"{r.get('avg_trade_gross_usd', 0.):.2f} | {r.get('avg_trade_friction_usd', 0.):.2f} | "
+                f"{metric(r.get('holding_events_mean'))} |")
         for i, w in enumerate(experiment['windows'], 1):
             t, tuning = w['partitions']['test'], w['tuning']
             lines += ['', f'### 窗口 {i}', '',
@@ -55,6 +66,16 @@ def render_report(data):
                     d = item['diagnostics']
                     weights = ' / '.join(f'{v:.4f}' for v in item['weights'])
                     lines.append(f"| {reward} / {group} | {weights} | {d['converged']} | {d['expert_representable']} | {d['final_margin']:.6f} |")
+            lines += ['', '| 交易策略 | 平仓笔数 | mean holding | median holding | P90 holding | 毛盈亏/笔 USD | 摩擦/笔 USD | 毛胜率 | 净胜率 |',
+                '|---|---:|---:|---:|---:|---:|---:|---:|---:|']
+            for s in w['strategies']:
+                gross_wr = None if s.get('gross_win_rate') is None else s['gross_win_rate'] * 100
+                net_wr = None if s.get('net_win_rate') is None else s['net_win_rate'] * 100
+                lines.append(
+                    f"| {s['strategy']} | {s['total_trades']} | {metric(s.get('holding_events_mean'))} | "
+                    f"{metric(s.get('holding_events_median'))} | {metric(s.get('holding_events_p90'))} | "
+                    f"{s.get('avg_trade_gross_usd', 0.):.2f} | {s.get('avg_trade_friction_usd', 0.):.2f} | "
+                    f"{metric(gross_wr, '%')} | {metric(net_wr, '%')} |")
             lines += ['', '| 模型 | 原始符号准确率 | 门槛三类准确率 | 有效信号准确率 | 信号覆盖率 | 分类 argmax 准确率 | 单条 P50 / P95 μs |',
                 '|---|---:|---:|---:|---:|---:|---|']
             for m in w['model_eval']:
