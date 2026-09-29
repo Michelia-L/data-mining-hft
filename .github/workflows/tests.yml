@@ -17,6 +17,36 @@ jobs:
       - run: python -m pip install -r requirements.txt
       # 单元与合成数据端到端测试：验证因果性、资金守恒、奖励匹配和可重复性。
       - run: python -m unittest discover -s tests -v
+      # 一次性诊断：在 ES 第二个正式 60k 窗口重放 timeout-as-review 修改，并与仓库内旧结果对比。
+      - name: Diagnose timeout review on ES window 2
+        run: |
+          python - <<'PY'
+          import json
+          import numpy as np
+          from pathlib import Path
+          from run_experiments import run_window
+          from src.config import DATASET_PATHS, SAMPLE_EVENTS, SEED
+          from src.data_loader import dataset_row_count
+
+          strategy = 'Variant-ME-EventUCB'
+          old = json.loads(Path('results/experiment_summary.json').read_text())
+          before = next(s for s in old['experiments']['CME_ES']['windows'][1]['strategies']
+                        if s['strategy'] == strategy)
+
+          path = DATASET_PATHS['CME_ES']
+          total = dataset_row_count(path)
+          offset = int(np.linspace(0, total - SAMPLE_EVENTS, 3, dtype=int)[1])
+          window = run_window('CME_ES', path, offset, SAMPLE_EVENTS, SEED)
+          after = next(s for s in window['strategies'] if s['strategy'] == strategy)
+
+          keys = ['total_trades', 'win_rate', 'net_pnl_usd', 'gross_pnl_usd',
+                  'friction_usd', 'avg_trade_net_usd', 'max_drawdown']
+          print('TIMEOUT_REVIEW_DIAGNOSTIC=' + json.dumps({
+              'offset': offset,
+              'before': {k: before[k] for k in keys},
+              'after': {k: after[k] for k in keys},
+          }, sort_keys=True))
+          PY
       # 再用真实数据的小窗口检查入口可运行；另存 /tmp，不覆盖正式实验产物。
       - run: python run_experiments.py --rows 3000 --windows 1 --output /tmp/smoke.json
       # 报告和看板都必须能消费这一份新结果，避免输出结构变化后展示代码失效。
