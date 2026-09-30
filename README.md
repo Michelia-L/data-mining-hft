@@ -55,6 +55,24 @@ UTC 文件日期不是交易所 session；分区内可能包含事件时间稍�
 结果保存索引哈希、所选 Parquet 哈希、文件日期与质量状态；报告和看板也显示质量状态。
 大体积原始行情由运行者在本地准备，测试使用临时合成 Parquet，不需要下载这三个月数据。
 
+### 制作固定时间盘口快照
+
+论文的 tick 是定时间隔快照；Databento 的 MBP-10 文件是一条条不等间隔消息。
+下面可从选定的 ESZ5 日期生成 0.5 秒网格快照。先用 `--max-records` 处理前缀检查；
+去掉该参数会处理所选文件的全部原始消息。输出路径必须是新文件，不会覆盖旧结果。
+
+```bash
+python build_timed_snapshots.py --data-index data/ESZ5/index.json --data-date 2025-09-22 \
+  --max-records 300000 --output /tmp/esz5-20250922-500ms-preview.parquet
+```
+
+边界时刻只使用此前已收到、带 `F_LAST` 的完整盘口；依据 `ts_recv` 确认行情到达，
+并保留交易所原始 `source_ts_event`、原始 `source_ts_recv` 和消息标志。
+默认只接受年龄不超过 0.5 秒的报价，遇到未完成事件、损坏盘口或长空档则跳过该网格。
+输出 `ts_event` 是网格时间，Parquet 元数据记录采样设置、源哈希和是否只读取前缀。
+**跳过的网格不能在后续模型中当成连续 tick**；跨日 session 划分与长期标签隔离将另行实现。
+这个工具目前只生成快照文件，尚未改变 `run_experiments.py` 的事件级默认实验。
+
 ## 数据与产物
 
 - `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。
