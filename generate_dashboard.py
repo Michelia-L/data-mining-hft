@@ -68,6 +68,9 @@ function plot(){
 function render(){
  const e=DATA.experiments[$('dataset').value], w=current(), t=w.partitions.test;
  $('scope').textContent=`${w.symbol} · 测试 ${t.start} → ${t.end} · ${fmt(t.duration_seconds)} 秒 · ${t.rows.toLocaleString()} 事件 · 前三段各清除至少 ${w.purge_events} 事件 · 门槛 ${w.tuning.threshold} · 奖励模式 ${w.reward_definition}`;
+ // 索引日期是 UTC 文件分区；保留质量状态，避免把降级输入误认成正常完整交易日。
+ const daily=DATA.metadata.daily_source;
+ if(daily) $('scope').textContent+=` · UTC 文件日期 ${daily.file_date_utc} · 数据质量 ${daily.condition} · 单文件窗口，尚未跨日训练`;
  // 并列规则与候选完全来自后端记录，不根据测试表现再排序。
  const choices=[['门槛',w.tuning.threshold_choice],['固定模型',w.tuning.fixed_choice],['校准专家',w.calibration_expert_choice],...Object.entries(w.tuning.c_choices).map(([k,c])=>['UCB-'+k,c])];
  table('choices',['项目','选中','最佳/并列最佳候选','规则'],choices.map(([label,c])=>[label,c.selected,(c.tied_best_candidates.length>1?'并列最佳：':'最佳：')+c.tied_best_candidates.join(', '),c.tie_break_rule]));

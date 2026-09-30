@@ -39,6 +39,10 @@ def render_report(data):
         '## 配置与复核', '',
         f"种子 {data['metadata']['seed']}；每品种 {data['metadata']['windows']} 个窗口；每窗 {data['metadata']['rows']:,} 条原始事件；holding period {data['metadata'].get('execution', {}).get('holding_period', 'N/A')} events；Python {data['metadata']['python']}；计算线程 {data['metadata']['threads']}。", '',
         'JSON 保存数据与源码哈希、依赖实际版本、时间范围、候选分数、并列选择、奖励迭代。`environment-snapshot.txt` 是环境版本快照，不是完整依赖锁。', '']
+    # 日期来自下载分区，展示时避免将它误称为完整交易日；旧 JSON 没有此字段仍可读取。
+    if daily := data['metadata'].get('daily_source'):
+        lines += [f"索引输入：ESZ5；UTC 文件日期 `{daily['file_date_utc']}`；"
+                  f"数据质量 `{daily['condition']}`。本次仍为单文件窗口实验，尚未跨日训练。", '']
     for key, experiment in data['experiments'].items():
         lines += [f'## {key}：文件内多窗口描述统计（非独立重复实验）', '',
             f"数据 `{experiment['source_file']}`，共 {experiment['source_rows']:,} 行。每窗账户重置，合计不是连续账户收益。", '',
