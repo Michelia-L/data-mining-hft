@@ -63,6 +63,13 @@ UTC 文件日期不是交易所 session；分区内可能包含事件时间稍�
 - [实验结果](results/experiment_summary.json)：切分时间、调参轨迹、模型诊断、策略指标、奖励消融及资金曲线。
 - [复现报告](replication_report.md)：从同一结果文件自动生成，注明实现与论文差异。
 - [离线看板](visualization_dashboard.html)：单文件，无 CDN 依赖，可切换品种和窗口。
+- [复现瓶颈评估](docs/bottleneck_assessment_2026-09-30.md)：论文、旧结果和新增数据的对照，注明评估基线与后续进度。
+
+## 分支与开发约定
+
+`main` 保存已合并版本；每项新工作从最新 `main` 创建功能分支，小步提交并发布到对应远程分支，再通过 PR 合并。已合并的 PR 分支不继续追加新功能。功能分支已发布不代表 GitHub 默认展示的 `main` 已更新。
+
+本地数据、备份分支及本轮整理记录见 [仓库状态与开发流程](docs/repository_workflow.md)。
 
 ## 评估口径与论文差异
 
