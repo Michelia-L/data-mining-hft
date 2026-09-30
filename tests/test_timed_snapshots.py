@@ -91,13 +91,36 @@ class TimedSnapshotTests(unittest.TestCase):
                            quote(1100, bid=102, flags=132), quote(1400, bid=103),
                            quote(1600, bid=104)])
         snapshots = self.sample()
+        # 坏接收时间可能对应 0.5 秒之前到达的消息；无法证明当时旧盘口
+        # 仍可用，因此 0.5 秒也跳过，只在可信完整盘口之后恢复输出。
         self.assertEqual([x['ts_event'] for x in snapshots],
-                         [BASE + pd.Timedelta(milliseconds=500),
-                          BASE + pd.Timedelta(milliseconds=1500)])
-        self.assertEqual([x['bid_px_00'] for x in snapshots], [100, 103])
+                         [BASE + pd.Timedelta(milliseconds=1500)])
+        self.assertEqual([x['bid_px_00'] for x in snapshots], [103])
         self.write_source([quote(100, symbol='NQZ5'), quote(1000)])
         with self.assertRaisesRegex(ValueError, 'ESZ5'):
             self.sample()
+
+    def test_bad_receive_timestamp_never_advances_grid(self):
+        """坏时间即使标到 30 秒也不能提前结算网格；等可信完整事件后恢复。"""
+        self.write_source([quote(100, bid=100), quote(30000, bid=999, flags=136),
+                           quote(900, bid=101), quote(1100, bid=102)])
+        stats = {}
+        snapshots = self.sample(batch_size=1, statistics=stats)
+        self.assertEqual([x['ts_event'] for x in snapshots],
+                         [BASE + pd.Timedelta(seconds=1)])
+        self.assertEqual([x['bid_px_00'] for x in snapshots], [101])
+        self.assertEqual(stats['skipped_intervals'], 1)
+        self.assertEqual(stats['unreliable_receive_records'], 1)
+        self.assertEqual(stats['source_records'], 4)
+
+    def test_exchange_clock_ahead_of_receive_clock_is_provenance_only(self):
+        """交易所时钟可能快于接收端；此关系不能错误地丢弃完整盘口。"""
+        self.write_source([quote(100, bid=100, event_ms=10000), quote(900, bid=101)])
+        snapshots = self.sample()
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0]['bid_px_00'], 100)
+        self.assertEqual(snapshots[0]['source_ts_event'], BASE + pd.Timedelta(seconds=10))
+        self.assertLess(snapshots[0]['source_ts_recv'], snapshots[0]['ts_event'])
 
     def test_reverse_receive_order_is_rejected(self):
         """不能为了排序而看完未来才决定当下快照；接收乱序直接报错。"""

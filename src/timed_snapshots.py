@@ -77,7 +77,8 @@ def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
         raise ValueError('batch_size must be a positive integer')
     interval_ns, max_age_ns = interval_ms * 1_000_000, max_age_ms * 1_000_000
     stats = statistics if statistics is not None else {}
-    stats.update(source_records=0, snapshots=0, skipped_intervals=0, invalid_completed_books=0)
+    stats.update(source_records=0, snapshots=0, skipped_intervals=0,
+                 invalid_completed_books=0, unreliable_receive_records=0)
     parquet = pq.ParquetFile(source_path)
     missing = set(INPUT_FIELDS) - set(parquet.schema_arrow.names)
     if missing:
@@ -102,6 +103,20 @@ def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
         for row in range(batch.num_rows):
             if max_records is not None and stats['source_records'] >= max_records:
                 return
+            stats['source_records'] += 1
+            if values['symbol'][row] != 'ESZ5':
+                raise ValueError('Timed snapshot input must contain only ESZ5')
+            flags = int(values['flags'][row])
+            if flags & F_BAD_TS_RECV:
+                # 此行的接收时间不可信，连“网格边界已经过去”都不能由它证明。
+                # 因而在比较时间、推进边界或更新 last_recv 之前隔离该行；
+                # 已知盘口随即失效，下一个可信的完整事件到来后才重新启用。
+                last_complete = None
+                event_open = True
+                stats['unreliable_receive_records'] += 1
+                if flags & F_LAST:
+                    stats['invalid_completed_books'] += 1
+                continue
             recv_ns = int(values['ts_recv'][row])
             if last_recv is not None and recv_ns < last_recv:
                 raise ValueError('ts_recv moved backwards; snapshots require receive-ordered input')
@@ -129,19 +144,15 @@ def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
                     stats['skipped_intervals'] += remaining
                     next_boundary += remaining * interval_ns
             last_recv = recv_ns
-            stats['source_records'] += 1
-            if values['symbol'][row] != 'ESZ5':
-                raise ValueError('Timed snapshot input must contain only ESZ5')
-            flags = int(values['flags'][row])
             if not flags & F_LAST:
                 event_open = True
                 continue
             event_open = False
             event_ns = int(values['ts_event'][row])
-            if (flags & (F_BAD_TS_RECV | F_MAYBE_BAD_BOOK) or event_ns > recv_ns
-                    or not _valid_book(values, row)):
-                # 时间不可信、盘口可能损坏或交易所时间晚于接收时间时，不沿用
-                # 旧报价穿越异常事件；后续有效完成事件才能恢复快照输出。
+            if flags & F_MAYBE_BAD_BOOK or not _valid_book(values, row):
+                # 盘口可能损坏时不沿用旧报价；交易所与接收端时钟未必同步，
+                # 因此不比较 event_ns 和 recv_ns 的大小来筛选合法消息。
+                # 事件时间仅作为来源信息保存，快照因果性始终由接收时间决定。
                 last_complete = None
                 stats['invalid_completed_books'] += 1
                 continue

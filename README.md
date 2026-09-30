@@ -68,6 +68,7 @@ python build_timed_snapshots.py --data-index data/ESZ5/index.json --data-date 20
 
 边界时刻只使用此前已收到、带 `F_LAST` 的完整盘口；依据 `ts_recv` 确认行情到达，
 并保留交易所原始 `source_ts_event`、原始 `source_ts_recv` 和消息标志。
+两个时钟可能未同步；因果采样只依据可信的接收时间，带 `F_BAD_TS_RECV` 的消息不推进网格。
 默认只接受年龄不超过 0.5 秒的报价，遇到未完成事件、损坏盘口或长空档则跳过该网格。
 输出 `ts_event` 是网格时间，Parquet 元数据记录采样设置、源哈希和是否只读取前缀。
 **跳过的网格不能在后续模型中当成连续 tick**；跨日 session 划分与长期标签隔离将另行实现。
