@@ -57,6 +57,7 @@ UTC 文件日期不是交易所 session；分区内可能包含事件时间稍�
 
 ## 数据与产物
 
+- `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。
 - `databento_glbx.mdp3_mbp_10.parquet`：CME ES 合约订单簿事件。
 - `databento_ifeu.impact_mbp_10.parquet`：ICE Brent 合约订单簿事件。
 - [实验结果](results/experiment_summary.json)：切分时间、调参轨迹、模型诊断、策略指标、奖励消融及资金曲线。
