@@ -32,13 +32,44 @@ python generate_dashboard.py --input /tmp/smoke.json --output /tmp/dashboard.htm
 
 使用 `--rows`、`--windows`、`--seed` 调整实验；窗口必须不重叠。输入数据优先读取 Parquet，按批次加载请求窗口，兼容同列 CSV。只允许单一合约，按事件时间和交易所序号稳定排序。
 
+### 从新增 ESZ5 数据中选择日期
+
+新增 `data/ESZ5/index.json` 索引入口，可以指定一个 UTC 文件日期做实验：
+
+```bash
+python run_experiments.py --data-index data/ESZ5/index.json --data-date 2025-09-22 \
+  --rows 3000 --windows 1 --output /tmp/esz5-20250922-smoke.json
+python generate_report.py --input /tmp/esz5-20250922-smoke.json --output /tmp/esz5-report.md
+python generate_dashboard.py --input /tmp/esz5-20250922-smoke.json --output /tmp/esz5-dashboard.html
+```
+
+这是向论文多日实验迁移的第一步：本次只运行所选文件的 ESZ5，不会同时运行旧 Brent。
+`--rows` 和 `--windows` 仍表示该文件内部的抽样窗口，**尚未实现跨日训练、定时快照或长期奖励**。
+UTC 文件日期不是交易所 session；分区内可能包含事件时间稍早的初始记录。
+不传索引参数时，仍运行原来的根目录数据。新入口要求显式指定 `--output`。
+
+索引顶层包含 `dataset=GLBX.MDP3`、`schema=mbp-10`、`symbol=ESZ5`、
+`stype_in=raw_symbol` 和 `files` 列表；每条记录包含 `date`、`parquet`、`rows`、
+`condition`，可另有 `parquet_bytes`。相对数据路径以项目根目录为基准，不是索引所在目录。
+默认拒绝 `degraded` 日期；仅在明确做质量敏感性实验时加 `--include-degraded`。
+结果保存索引哈希、所选 Parquet 哈希、文件日期与质量状态；报告和看板也显示质量状态。
+大体积原始行情由运行者在本地准备，测试使用临时合成 Parquet，不需要下载这三个月数据。
+
 ## 数据与产物
 
+- `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。
 - `databento_glbx.mdp3_mbp_10.parquet`：CME ES 合约订单簿事件。
 - `databento_ifeu.impact_mbp_10.parquet`：ICE Brent 合约订单簿事件。
 - [实验结果](results/experiment_summary.json)：切分时间、调参轨迹、模型诊断、策略指标、奖励消融及资金曲线。
 - [复现报告](replication_report.md)：从同一结果文件自动生成，注明实现与论文差异。
 - [离线看板](visualization_dashboard.html)：单文件，无 CDN 依赖，可切换品种和窗口。
+- [复现瓶颈评估](docs/bottleneck_assessment_2026-09-30.md)：论文、旧结果和新增数据的对照，注明评估基线与后续进度。
+
+## 分支与开发约定
+
+`main` 保存已合并版本；每项新工作从最新 `main` 创建功能分支，小步提交并发布到对应远程分支，再通过 PR 合并。已合并的 PR 分支不继续追加新功能。功能分支已发布不代表 GitHub 默认展示的 `main` 已更新。
+
+本地数据、备份分支及本轮整理记录见 [仓库状态与开发流程](docs/repository_workflow.md)。
 
 ## 评估口径与论文差异
 

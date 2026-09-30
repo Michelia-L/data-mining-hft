@@ -25,6 +25,7 @@ from src.config import (BASE_DIR, DATASET_PATHS, SAMPLE_EVENTS, HORIZON_EVENTS, 
                         UCB_CANDIDATES, SPLIT_RATIOS, SUMMARY_JSON_PATH)
 from src.data_loader import (dataset_row_count, load_and_preprocess_events,
                              extract_microstructure_features, prepare_train_test_split)
+from src.data_catalog import select_daily_source
 from src.model_library import build_model_library, train_model_library
 from src.irl_reward import IRLRewardLearner
 from src.model_selector import (build_all_selectors, CausalEventUCBSelector, CausalShadowARSSelector,
@@ -316,12 +317,16 @@ def aggregate(windows):
     return output
 
 
-def main():
+def main(argv=None):
     """解析命令行、固定计算线程、遍历数据窗口，并在全部成功后保存结果。
 
     --rows 控制每窗原始事件数，--windows 控制每品种窗口数，--seed 控制
     随机基线，--output 可让快速验证另存文件。元数据同时记录依赖与源文件哈希，
-    其中源码哈希对应生成结果当时的文件；后续仅改注释不应伪造历史运行记录。"""
+    其中源码哈希对应生成结果当时的文件；后续仅改注释不应伪造历史运行记录。
+    argv 供自动化测试传入命令行参数；正常启动时使用进程实际参数。
+
+    --data-index 与 --data-date 配对使用，只运行索引中选定日期的 ESZ5 文件。
+    这一步仍然做单文件窗口实验，不能把结果称为跨日训练或论文长期回测。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rows', type=int, default=SAMPLE_EVENTS, help='Raw events per within-file window')
     parser.add_argument('--reward-definition', choices=['paper_price_difference', 'normalized_return'],
@@ -330,10 +335,34 @@ def main():
     parser.add_argument('--seed', type=int, default=SEED)
     parser.add_argument('--holding-period', type=int, default=RL_CONFIG['holding_period'],
                         help='Minimum event interval between position reviews; all other settings stay fixed')
-    parser.add_argument('--output', default=SUMMARY_JSON_PATH)
-    args = parser.parse_args()
+    parser.add_argument('--data-index', help='Databento index JSON; pair with --data-date')
+    parser.add_argument('--data-date', help='UTC file date YYYY-MM-DD; not an exchange session')
+    parser.add_argument('--include-degraded', action='store_true',
+                        help='Explicitly allow a selected date marked degraded')
+    parser.add_argument('--output', help='Output JSON; required for indexed daily input')
+    args = parser.parse_args(argv)
     if args.rows < 2000 or args.windows < 1 or args.holding_period < 1:
         parser.error('--rows >= 2000, --windows >= 1 and --holding-period >= 1 are required')
+    # 新输入必须显式声明日期和输出文件，避免以为已跑完三个月，或误覆盖旧结果。
+    # 不传新参数时完全保留根目录 ES/Brent 的默认入口，方便复核历史实验。
+    if bool(args.data_index) != bool(args.data_date):
+        parser.error('--data-index and --data-date must be supplied together')
+    if args.include_degraded and not args.data_index:
+        parser.error('--include-degraded requires --data-index and --data-date')
+    daily_source = None
+    datasets = DATASET_PATHS
+    if args.data_index:
+        if not args.output:
+            parser.error('Indexed daily input requires an explicit --output')
+        try:
+            daily_source = select_daily_source(args.data_index, args.data_date, args.include_degraded)
+        except (ValueError, OSError, KeyError, TypeError) as error:
+            parser.error(str(error))
+        datasets = {'CME_ES': daily_source['source_file']}
+        # 记录完整索引的哈希，并原样保留质量状态；显式允许并不意味着质量已修复。
+        daily_source['index_sha256'] = file_hash(args.data_index)
+        print(f"ESZ5: UTC file date {args.data_date}, condition={daily_source['condition']}; "
+              'within-file windows only, not cross-day training', flush=True)
     # 保存产生结果时的源码快照哈希；即使工作区还未提交，也能标识实际运行内容。
     source_files = [BASE_DIR / 'run_experiments.py'] + sorted((BASE_DIR / 'src').glob('*.py'))
     try:
@@ -352,9 +381,11 @@ def main():
                                  instruments=INSTRUMENT_CONFIG, ucb_candidates=UCB_CANDIDATES,
                                  scope='Disjoint windows within supplied files; not independent trading days.'),
                    experiments={})
+    if daily_source:
+        summary['metadata']['daily_source'] = daily_source
     # 限制 BLAS/OpenMP 等计算库线程，减少资源差异；耗时仍受硬件和系统负载影响。
     with threadpool_limits(limits=1):
-        for key, path in DATASET_PATHS.items():
+        for key, path in datasets.items():
             if not Path(path).exists():
                 raise FileNotFoundError(path)
             total = dataset_row_count(path)
@@ -365,11 +396,14 @@ def main():
             windows = []
             for i, offset in enumerate(offsets):
                 print(f'{key}: window {i + 1}/{args.windows}, offset={offset}', flush=True)
-                windows.append(run_window(key, path, offset, args.rows, args.seed, args.reward_definition,
-                                          args.holding_period))
+                window = run_window(key, path, offset, args.rows, args.seed, args.reward_definition,
+                                    args.holding_period)
+                if daily_source and window['symbol'] != daily_source['symbol']:
+                    raise ValueError('Loaded window symbol disagrees with indexed ESZ5 contract')
+                windows.append(window)
             summary['experiments'][key] = dict(source_file=Path(path).name, source_sha256=file_hash(path),
                                                source_rows=total, windows=windows, aggregate=aggregate(windows))
-    out = Path(args.output)
+    out = Path(args.output or SUMMARY_JSON_PATH)
     out.parent.mkdir(parents=True, exist_ok=True)
     # 先完整写临时文件再替换目标，防止中途失败留下半份 JSON 或覆盖有效结果。
     # 序列化拒绝 NaN/Infinity，指标无法定义时应明确使用 None/null。
