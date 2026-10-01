@@ -1,0 +1,254 @@
+"""定时快照的真实时间回放，先支持固定模型、静态集成与现金基线。
+
+论文物理第 3 页 §3.1 定义定时 tick，第 4 页 Eq.(2)–(4) 从预测/成交
+时刻计算未来中间价差。本模块用 UTC 纳秒驱动、用毫秒配置；不把缺格后的
+下一行当成目标价格。不实现论文 Algorithm 2/3，也不复用事件选择器的窗口。
+"""
+from collections import Counter, deque
+
+import numpy as np
+import pandas as pd
+
+from src.config import INITIAL_CAPITAL, INSTRUMENT_CONFIG, QUANTITY
+from src.execution_engine import Account
+from src.model_selector import SingleModelSelector
+from src.snapshot_dataset import SessionCalendar, utc_ns
+
+
+def timestamp(value):
+    """审计记录使用带 UTC 时区的字符串，避免把纳秒整数误解成事件号。"""
+    return pd.Timestamp(int(value), unit='ns', tz='UTC').isoformat()
+
+
+class TimeAccount(Account):
+    """复用经过验证的美元账本；内部复核时钟为纳秒，输出持仓时间为毫秒。
+
+父类只通过两个时钟相减检查复核期，故可传入纳秒而不修改旧事件实验。
+每笔成交及完整交易的输出移除 events/step 字段，以免混淆时间单位。
+"""
+    def fill(self, clock, side, owner, mid, bid, ask, opening):
+        """执行价格、滑点、手续费与旧账本相同，仅明确成交的真实时间。"""
+        order = super().fill(clock, side, owner, mid, bid, ask, opening)
+        order['timestamp_ns'] = int(order.pop('step'))
+        order['ts_event'] = timestamp(clock)
+        return order
+
+    def close(self, clock, mid, bid, ask):
+        """平仓盈亏仍属于原开仓模型；风险退出不伪装为新模型的交易贡献。"""
+        order = super().close(clock, mid, bid, ask)
+        trade = self.trades[-1]
+        trade['entry_time'] = timestamp(trade.pop('entry_step'))
+        trade['exit_time'] = timestamp(trade.pop('exit_step'))
+        trade['holding_ms'] = float(trade.pop('holding_events') / 1_000_000)
+        return order
+
+
+class TimeExecutionEngine:
+    """只读取当时行情和冻结预测的时间回放器；不消费任何离线未来标签。
+
+固定选择器也记录成熟反馈，便于验证 ME/OE 的观察时点，但不会据此换模型。
+动态选择器暂不接入，防止将 per-order 反馈或毫秒时钟静默套入旧事件协议。
+"""
+    def __init__(self, reward, *, interval_ms=500, latency_ms=500,
+                 holding_review_ms=15000, calendar=None,
+                 initial_capital=INITIAL_CAPITAL, quantity=QUANTITY, threshold=None):
+        """半秒网格、半秒延迟、15 秒复核均为项目设定，不是论文公开的执行参数。
+
+延迟可以不是网格倍数：使用到期后首条可用且连续的行情，不提前插值成交。
+奖励前瞻期必须是网格倍数；本入口用 price_difference 和固定权重隔离时间改动。
+"""
+        settings = (interval_ms, latency_ms, holding_review_ms)
+        horizons = tuple(reward.horizons)
+        if (any(type(x) is not int or x <= 0 for x in settings)
+                or not horizons or any(type(h) is not int or h <= 0 or h % interval_ms for h in horizons)
+                or tuple(sorted(set(horizons))) != horizons
+                or horizons[-1] > 7 * 86400000):
+            raise ValueError('Positive millisecond settings and increasing grid-aligned horizons required')
+        if reward.definition != 'paper_price_difference' or reward.deduct_cost:
+            raise ValueError('Time baseline requires price-difference reward without cost deduction')
+        self.config = INSTRUMENT_CONFIG['CME_ES']
+        self.threshold = self.config['trade_threshold'] if threshold is None else threshold
+        if (not np.isfinite([initial_capital, quantity, self.threshold]).all()
+                or initial_capital <= 0 or quantity <= 0 or self.threshold < 0):
+            raise ValueError('Invalid account or threshold settings')
+        self.reward, self.calendar = reward, calendar or SessionCalendar()
+        self.interval_ms, self.latency_ms = interval_ms, latency_ms
+        self.holding_review_ms = holding_review_ms
+        self.initial_capital, self.quantity = initial_capital, quantity
+
+    def run_backtest(self, selector, frame, predictions, *, detail=False):
+        """每行执行到期意图、结算成熟奖励、盯市，再依据当前有效特征发新意图。
+
+意外缺口只能在下一条行情到达时发现：撤销旧意图，在这条行情上风险平仓，
+保留缺口期间的价格损益。禁止偷看下一行并在缺口前回溯平仓。
+计划暂停/收盘在日历已知的最后一个严格早于边界的网格主动退出；边界快照
+只用于盯市和奖励，不假定边界仍能成交。退出行情缺失时，持仓延续到首条
+可交易行情再处理。期末强平也是明确的离线工程假设，不能当作实盘撮合。
+"""
+        if not isinstance(selector, SingleModelSelector) or selector.needs_shadow:
+            raise ValueError('Time replay currently supports static baseline selectors only')
+        if selector.action_history or selector.reward_history:
+            raise ValueError('Use a fresh selector for each replay')
+        frame = frame.reset_index(drop=True)
+        n = len(frame)
+        if n < 2:
+            raise ValueError('At least two snapshots are required')
+        times = utc_ns(frame.ts_event)
+        step = self.interval_ms * 1_000_000
+        if (frame.ts_event.dt.tz is None or (np.diff(times) <= 0).any() or (times % step).any()):
+            raise ValueError('Strictly increasing timezone-aware grid timestamps required')
+        received = utc_ns(frame.source_ts_recv)
+        if (frame.source_ts_recv.dt.tz is None or frame.source_ts_recv.isna().any()
+                or (received >= times).any()):
+            raise ValueError('Replay quotes must have arrived strictly before their snapshot')
+        assigned, outside, preopen = self.calendar.assign(frame)
+        if (outside or preopen or not assigned.session_id.equals(frame.session_id)
+                or not assigned.segment_id.equals(frame.segment_id)):
+            raise ValueError('Replay session metadata disagrees with calendar')
+        mid, bid, ask = (frame[c].to_numpy(float) for c in ('mid_price', 'bid_px_00', 'ask_px_00'))
+        if (not np.isfinite(np.c_[mid, bid, ask]).all() or (bid <= 0).any()
+                or (ask < bid).any() or not np.allclose(mid, (bid + ask) / 2, rtol=0, atol=1e-9)):
+            raise ValueError('Invalid replay quotes')
+        if frame.feature_valid.dtype != bool:
+            raise ValueError('Feature availability must be boolean')
+        available = frame.feature_valid.to_numpy()
+        predictions = np.asarray(predictions, float)
+        if predictions.shape != (n, selector.k) or not np.isfinite(predictions[available]).all():
+            raise ValueError('Finite causal predictions aligned to feature-valid rows required')
+        sessions, segments = frame.session_id.to_numpy(), frame.segment_id.to_numpy()
+        changed = np.r_[False, (np.diff(times) != step) | (sessions[1:] != sessions[:-1])
+                         | (segments[1:] != segments[:-1])]
+        # block 仅由当前和过去时刻推导，绝不根据未来 learning_ready 决定能否交易。
+        blocks = np.cumsum(changed)
+        ends = dict(zip(self.calendar.segments.segment_id, self.calendar.ends))
+        account = TimeAccount(self.config, self.holding_review_ms * 1_000_000, self.quantity)
+        intents, orders, signals = deque(), deque(), deque()
+        hs = np.array(self.reward.horizons, dtype=np.int64) * 1_000_000
+        longest = int(hs[-1])
+        feature_sum = np.zeros(len(hs))
+        statuses = {'ME': Counter(), 'OE': Counter()}
+        exits, cancelled = Counter(), Counter()
+        observations, decisions = [], []
+        gross_values, net_values = [], []
+        matured_orders = 0
+
+        def mature(queue, now, kind):
+            """仅在最长前瞻到期后检查已到达行情；缺格奖励不补零、不送入选择器。
+
+            即便索引容器包含整段历史，实际取出的目标索引严格不超过当前行。
+            短尺度价格无需提前产生反馈；Eq.(3) 的完整向量要等所有尺度到期。
+            """
+            nonlocal matured_orders
+            while queue and times[queue[0]['row']] + longest <= times[now]:
+                item = queue.popleft()
+                origin = item['row']
+                targets = times[origin] + hs
+                indices = np.searchsorted(times[:now + 1], targets)
+                safe = np.minimum(indices, now)
+                if (indices > now).any() or not np.array_equal(times[safe], targets):
+                    status = 'missing_target'
+                elif (blocks[safe] != blocks[origin]).any():
+                    status = 'crossed_gap_or_session'
+                else:
+                    status = 'matured'
+                statuses[kind][status] += 1
+                if status != 'matured':
+                    continue
+                values = self.reward.features_from_prices(mid[origin], mid[safe], item['side'])
+                if kind == 'OE':
+                    feature_sum[:] += values
+                    matured_orders += 1
+                if selector.reward_type == kind:
+                    score = self.reward.score(values)
+                    # 固定基线只记录反馈；传入从回放起点开始的毫秒，而不是行号。
+                    selector.observe(item['owner'], score, int((times[now] - times[0]) // 1_000_000))
+                    if detail:
+                        observations.append(dict(kind=kind, owner=item['owner'], reward=score,
+                            origin_time=timestamp(times[origin]), due_time=timestamp(targets[-1]),
+                            observed_time=timestamp(times[now]), target_times=[timestamp(t) for t in targets]))
+
+        for row, clock in enumerate(times):
+            terminal = row == n - 1
+            segment_end = ends[segments[row]]
+            tradable = clock < segment_end
+            scheduled_exit = tradable and clock + step >= segment_end
+            reason = None
+            if changed[row]:
+                reason = ('session_transition' if sessions[row] != sessions[row - 1]
+                          else 'scheduled_break' if segments[row] != segments[row - 1] else 'gap')
+            if scheduled_exit:
+                reason = 'scheduled_exit'
+            if terminal and tradable:
+                reason = 'replay_end'
+            fills = []
+            if reason or not tradable:
+                cancelled[reason or 'closed_boundary'] += len(intents)
+                intents.clear()
+                if tradable and account.position:
+                    fills = account.advance(int(clock), 0, account.owner, mid[row], bid[row], ask[row], terminal=True)
+                    exits[reason] += 1
+            else:
+                eligible = []
+                while intents and intents[0]['due'] <= clock:
+                    eligible.append(intents.popleft())
+                if eligible:
+                    # 若到期意图合并到同一行情，只执行最新一个，显式记录其余被取代。
+                    cancelled['superseded'] += len(eligible) - 1
+                    intent = eligible[-1]
+                    fills = account.advance(int(clock), intent['side'], intent['owner'], mid[row], bid[row], ask[row])
+                    for fill in fills:
+                        fill['intent_time'] = timestamp(intent['origin'])
+                        fill['execution_due_time'] = timestamp(intent['due'])
+            for fill in fills:
+                fill['execution_reason'] = reason or 'delayed_intent'
+                orders.append(dict(row=row, side=fill['side'], owner=fill['owner']))
+            mature(orders, row, 'OE')
+            mature(signals, row, 'ME')
+            gross = account.gross_equity_change(mid[row])
+            gross_values.append(gross)
+            net_values.append(gross - account.costs)
+            if available[row] and tradable and not scheduled_exit and not terminal:
+                elapsed_ms = int((clock - times[0]) // 1_000_000)
+                owner = selector.select_model(elapsed_ms)
+                prediction = (0. if selector.flat else float(predictions[row].mean())
+                              if selector.ensemble else predictions[row, owner])
+                direction = int(prediction > self.threshold) - int(prediction < -self.threshold)
+                signals.append(dict(row=row, side=direction, owner=owner))
+                intents.append(dict(origin=int(clock), due=int(clock) + self.latency_ms * 1_000_000,
+                                    side=direction, owner=owner))
+                if detail:
+                    decisions.append(dict(ts_event=timestamp(clock), owner=owner, direction=direction))
+
+        equity = np.r_[self.initial_capital, self.initial_capital + np.asarray(net_values)]
+        peaks = np.maximum.accumulate(equity)
+        holding = np.array([t['holding_ms'] for t in account.trades])
+        for kind, queue in [('OE', orders), ('ME', signals)]:
+            statuses[kind]['unmatured_at_end'] = len(queue)
+        points = sorted(set([0, n - 1] + list(range(0, n, max(1, n // 300)))))
+        result = dict(strategy=selector.name, replay_rows=n, feature_valid_rows=int(available.sum()),
+            decision_count=len(selector.action_history), total_trades=len(account.trades), total_fills=len(account.fills),
+            gross_pnl_usd=float(gross_values[-1]), net_pnl_usd=float(net_values[-1]), friction_usd=float(account.costs),
+            initial_capital=self.initial_capital, quantity=self.quantity,
+            net_return=float(net_values[-1] / self.initial_capital),
+            max_drawdown=float(((peaks - equity) / peaks).max()), max_drawdown_usd=float((peaks - equity).max()),
+            terminal_position=account.position, terminal_position_liquidated=account.position == 0,
+            holding_ms_mean=float(holding.mean()) if len(holding) else None,
+            matured_order_count=matured_orders, order_feature_expectation_defined=bool(matured_orders),
+            order_feature_expectation=(feature_sum / matured_orders if matured_orders else feature_sum).tolist(),
+            reward_horizon_unit='milliseconds', reward_horizons_ms=self.reward.horizons,
+            reward_definition=self.reward.definition, reward_weights=self.reward.weights.tolist(),
+            reward_cost_mode='PaperOE-no-cost', reward_status={k: dict(v) for k, v in statuses.items()},
+            observed_rewards=len(selector.reward_history), reward_type=selector.reward_type,
+            unmatured_fill_rewards_at_end=len(orders), risk_exits=dict(exits),
+            cancelled_intents=dict(cancelled), unexecuted_intents_at_end=len(intents),
+            latency_ms=self.latency_ms, holding_review_ms=self.holding_review_ms, interval_ms=self.interval_ms,
+            action_distribution=selector.get_selection_distribution(),
+            timestamps=[timestamp(times[i]) for i in points],
+            net_curve=[float(net_values[i] / self.initial_capital) for i in points],
+            gross_curve=[float(gross_values[i] / self.initial_capital) for i in points],
+            selector_protocol='static_baseline',
+            execution_assumption='Aggressive one-contract quote simulation; no queue, impact or margin model.')
+        if detail:
+            result.update(fills=account.fills, trades=account.trades, decisions=decisions,
+                          reward_observations=observations, equity_usd=equity[1:].tolist())
+        return result
