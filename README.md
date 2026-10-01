@@ -44,7 +44,7 @@ python generate_dashboard.py --input /tmp/esz5-20250922-smoke.json --output /tmp
 ```
 
 这是向论文多日实验迁移的第一步：本次只运行所选文件的 ESZ5，不会同时运行旧 Brent。
-`--rows` 和 `--windows` 仍表示该文件内部的抽样窗口，**尚未实现跨日训练、定时快照或长期奖励**。
+`--rows` 和 `--windows` 仍表示该文件内部的抽样窗口，**该回测入口尚未接入定时快照、跨日训练或长期奖励**。
 UTC 文件日期不是交易所 session；分区内可能包含事件时间稍早的初始记录。
 不传索引参数时，仍运行原来的根目录数据。新入口要求显式指定 `--output`。
 
@@ -71,8 +71,61 @@ python build_timed_snapshots.py --data-index data/ESZ5/index.json --data-date 20
 两个时钟可能未同步；因果采样只依据可信的接收时间，带 `F_BAD_TS_RECV` 的消息不推进网格。
 默认只接受年龄不超过 0.5 秒的报价，遇到未完成事件、损坏盘口或长空档则跳过该网格。
 输出 `ts_event` 是网格时间，Parquet 元数据记录采样设置、源哈希和是否只读取前缀。
-**跳过的网格不能在后续模型中当成连续 tick**；跨日 session 划分与长期标签隔离将另行实现。
+**跳过的网格不能在后续模型中当成连续 tick**；可使用下述数据准备入口划分 session 并隔离时间标签。
 这个工具目前只生成快照文件，尚未改变 `run_experiments.py` 的事件级默认实验。
+
+### 整理 session、缺口与时间标签
+
+`prepare_snapshot_dataset.py` 读取上一步生成的快照，按交易 session 缓冲，
+输出带特征、标签和有效性标志的 Parquet，以及同一口径的 JSON/中文质量报告：
+
+```bash
+# 沿用前缀快照做开发验证，必须显式允许预览；输出目录必须尚不存在。
+python prepare_snapshot_dataset.py \
+  --snapshots /tmp/esz5-20250922-500ms-preview.parquet \
+  --allow-partial --output-dir /tmp/esz5-20250922-dataset-preview
+```
+
+正式整理时去掉 `--allow-partial`，提供按时间排列的多个完整快照文件：
+
+```bash
+python prepare_snapshot_dataset.py \
+  --snapshots data/ESZ5/snapshots/2025-09-21.parquet \
+              data/ESZ5/snapshots/2025-09-22.parquet \
+              data/ESZ5/snapshots/2025-09-23.parquet \
+  --output-dir data/ESZ5/prepared/2025-09-22-23
+```
+
+这些正式文件需先用 `build_timed_snapshots.py` 生成；不能以原始 MBP 文件代替。
+UTC 午夜不切断同一 session。完整交易 session 通常需要相邻 UTC 分区；
+质量报告会列出输入时间范围内未提供的 session，以及每个 session 的前尾和内部缺格。
+`coverage_complete` 仅说明该 session 的计划交易网格全部存在，不代表原始消息没有丢失。
+
+默认前瞻期为 `--horizons-ms 5000 15000 45000`，在半秒网格上对应 10/30/90 ticks。
+按精确时间生成 `future_price_diff_5000ms` 等价格差标签，另存 `future_return_5000ms` 等相对收益。
+`label_end_5000ms` 是计划到期时刻，**不能将离线未来标签作为当下可见信息**。
+目标格缺失、区间内任何缺格、交易暂停或 session 结束都会使相应标签失效；
+缺格后的动量/波动率重新预热。`feature_valid` 和各尺度 `label_valid_*` 分别表示有效性，
+`learning_ready` 要求特征及全部配置尺度的标签都有效。NaN 不补成零。
+
+如已确定训练/校准/验证/测试边界，按升序重复指定
+`--split-boundary 2025-09-23T22:00:00Z` 等带时区的时刻；达到或跨过边界的标签被清除。
+该工具不会自行选取四段日期，也不会拟合标准化参数。前瞻期必须是网格间隔的整数倍。
+默认拒绝降级数据；研究质量敏感性时显式使用 `--include-degraded`，质量状态保留在报告中。
+
+交易日历使用 [版本化 ESZ5 配置](config/cme_es_sessions_2025.json)，覆盖 trade date
+2025-09-15 至 2025-12-15，按 `America/Chicago` 处理夏令时和每日暂停。
+根据 [CME 感恩节原表（AMP 转载）](https://www.ampfutures.com/hubfs/CME%20Group%20Globex%20-%20Thanksgiving%20Holiday%20Schedule%20-%20November%2026-28%2C%202025.png)，
+11/27 的早盘、当晚重开和 11/28 的早收盘归入 11/28 trade date，暂停两侧仍为不同连续区间。
+常规时段来源见配置及 [CME 交易时间说明](https://www.cmegroup.com/trading/equity-index/fairvaluefaq.html)。
+该配置不是通用交易所日历，越界输入会报错；其他日期需先核对规则并通过 `--calendar` 显式提供。
+快照允许 `(open, close]` 边界上的历史盘口，来源报价必须在同一开放时段内收到；
+这不表示 close 时刻仍能成交。临时停机通过降级标志与缺口暴露，不推断缺失价格。
+
+**本步骤准备数据，尚未将快照接入训练与回测。** `run_experiments.py` 的奖励成熟、
+持仓复核和执行延迟仍按事件数计，不能直接用其旧口径解释这份数据。
+后续先迁移引擎时间语义，再开展多日实验与长期奖励学习。
+本阶段真实数据检查与样本损失统计见 [session 时间标签验证记录](docs/snapshot_dataset_validation_2026-10-01.md)。
 
 ## 数据与产物
 
