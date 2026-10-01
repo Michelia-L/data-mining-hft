@@ -53,7 +53,8 @@ def _valid_book(values, row):
 
 
 def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
-                         max_records=None, batch_size=65536, statistics=None):
+                         max_records=None, batch_size=65536, statistics=None,
+                         grid_observer=None):
     """逐批读取 MBP-10，仅产生在网格时刻已经完整且足够新的盘口。
 
     以 UTC 整数纳秒网格为准，在边界 B 生成快照时只用 ts_recv < B 的记录。
@@ -64,6 +65,9 @@ def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
 
     statistics 是可选的调用方字典，用于边流式处理边收集行数与跳过原因。
     max_records 只做开发期前缀验证，不能代表完整交易日。
+    grid_observer 是只读诊断回调，接收 (网格起点ns,排他终点ns,状态,
+    完整盘口接收时间ns或None,最近可信接收时间ns或None)。范围按 interval_ms
+    递增；长空档一次报告，不逐格展开。回调不能改变采样或补齐缺失盘口。
     """
     if type(interval_ms) is not int or interval_ms <= 0:
         raise ValueError('interval_ms must be a positive integer')
@@ -78,13 +82,16 @@ def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
     interval_ns, max_age_ns = interval_ms * 1_000_000, max_age_ms * 1_000_000
     stats = statistics if statistics is not None else {}
     stats.update(source_records=0, snapshots=0, skipped_intervals=0,
-                 invalid_completed_books=0, unreliable_receive_records=0)
+                 invalid_completed_books=0, unreliable_receive_records=0,
+                 skipped_by_reason={})
     parquet = pq.ParquetFile(source_path)
     missing = set(INPUT_FIELDS) - set(parquet.schema_arrow.names)
     if missing:
         raise ValueError(f'MBP-10 snapshot input is missing columns: {sorted(missing)}')
     next_boundary = last_recv = last_complete = None
     event_open = False
+    # 原有采样状态保持不变；原因只解释为什么当前可见状态不能产出网格。
+    blocked_reason = 'no_completed_book'
     for batch in parquet.iter_batches(batch_size=batch_size, columns=INPUT_FIELDS):
         # ts_recv 在 Databento 的 pandas 元数据里也可能是索引；按 Arrow 列读取
         # 可避免 pandas 隐式重建索引，并完整保留纳秒精度。
@@ -113,6 +120,7 @@ def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
                 # 已知盘口随即失效，下一个可信的完整事件到来后才重新启用。
                 last_complete = None
                 event_open = True
+                blocked_reason = 'unreliable_receive_state'
                 stats['unreliable_receive_records'] += 1
                 if flags & F_LAST:
                     stats['invalid_completed_books'] += 1
@@ -129,6 +137,9 @@ def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
                          and next_boundary - last_complete['recv_ns'] <= max_age_ns)
                 if fresh:
                     chosen = last_complete
+                    if grid_observer is not None:
+                        grid_observer(next_boundary, next_boundary + interval_ns, 'emitted',
+                                      chosen['recv_ns'], last_recv)
                     snapshot = dict(ts_event=_utc_timestamp(next_boundary),
                                     source_ts_event=_utc_timestamp(chosen['event_ns']),
                                     source_ts_recv=_utc_timestamp(chosen['recv_ns']),
@@ -141,11 +152,22 @@ def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
                     next_boundary += interval_ns
                 else:
                     remaining = (recv_ns - next_boundary) // interval_ns + 1
+                    reason = (blocked_reason if last_complete is None or event_open
+                              else 'stale_completed_book')
+                    counts = stats['skipped_by_reason']
+                    counts[reason] = counts.get(reason, 0) + int(remaining)
+                    if grid_observer is not None:
+                        grid_observer(next_boundary, next_boundary + remaining * interval_ns, reason,
+                                      None if last_complete is None else last_complete['recv_ns'], last_recv)
                     stats['skipped_intervals'] += remaining
                     next_boundary += remaining * interval_ns
             last_recv = recv_ns
             if not flags & F_LAST:
                 event_open = True
+                # 尚未恢复可信完整盘口时保留先前异常原因；正常盘口被新事件
+                # 打断则标记 incomplete_event，不把未完成事件当成超龄。
+                if last_complete is not None or blocked_reason == 'no_completed_book':
+                    blocked_reason = 'incomplete_event'
                 continue
             event_open = False
             event_ns = int(values['ts_event'][row])
@@ -154,8 +176,10 @@ def iter_timed_snapshots(source_path, interval_ms=500, max_age_ms=None,
                 # 因此不比较 event_ns 和 recv_ns 的大小来筛选合法消息。
                 # 事件时间仅作为来源信息保存，快照因果性始终由接收时间决定。
                 last_complete = None
+                blocked_reason = ('bad_book_flag' if flags & F_MAYBE_BAD_BOOK else 'invalid_completed_book')
                 stats['invalid_completed_books'] += 1
                 continue
+            blocked_reason = None
             last_complete = dict(recv_ns=recv_ns, event_ns=event_ns,
                                  sequence=int(values['sequence'][row]),
                                  instrument_id=int(values['instrument_id'][row]),
@@ -175,7 +199,7 @@ def _sha256(path):
 
 def write_timed_snapshots(source_path, output_path, *, interval_ms=500,
                           max_age_ms=None, max_records=None, source_date=None,
-                          condition=None, batch_size=65536):
+                          condition=None, batch_size=65536, grid_observer=None):
     """流式写出 Parquet；成功后原子替换临时文件，错误时不留下半成品。
 
     产物元数据保留采样时钟、源哈希、日期、质量和是否只读了前缀。传入的
@@ -204,7 +228,7 @@ def write_timed_snapshots(source_path, output_path, *, interval_ms=500,
         with pq.ParquetWriter(temporary, schema, compression='zstd') as writer:
             rows = []
             for snapshot in iter_timed_snapshots(source_path, interval_ms, max_age_ms,
-                                                 max_records, batch_size, stats):
+                                                 max_records, batch_size, stats, grid_observer):
                 rows.append(snapshot)
                 if len(rows) == 2048:
                     writer.write_table(pa.Table.from_pylist(rows, schema=schema))

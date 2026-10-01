@@ -200,6 +200,40 @@ Ridge 使用两遍逐日充分统计量训练，每日仅物化当前 session；
 不使用旧报告与看板。数据可用率、负收益和长期校准阻碍见
 [跨日协议验证记录](docs/session_protocol_validation_2026-10-01.md)。
 
+### 诊断采样缺格与长期标签可用性
+
+`run_snapshot_audit.py` 在相同原始消息、交易日历和标签规则上，比较预先声明的
+500/1000/2000ms 完成盘口年龄上限。默认采样仍为 500ms，诊断不计算策略收益，
+不自动选择默认值。工程规则不能当作论文要求；更旧的报价可能不代表可成交盘口。
+
+```bash
+python run_snapshot_audit.py freeze \
+  --config config/esz5_snapshot_age_audit.json --data-index data/ESZ5/index.json \
+  --output-dir /tmp/esz5-age-plan
+python run_snapshot_audit.py run --plan /tmp/esz5-age-plan/plan.json \
+  --max-age-ms 500 --output-dir /tmp/esz5-age-500
+python run_snapshot_audit.py run --plan /tmp/esz5-age-plan/plan.json \
+  --max-age-ms 1000 --output-dir /tmp/esz5-age-1000
+python run_snapshot_audit.py run --plan /tmp/esz5-age-plan/plan.json \
+  --max-age-ms 2000 --output-dir /tmp/esz5-age-2000
+python run_snapshot_audit.py compare --plan /tmp/esz5-age-plan/plan.json \
+  --results /tmp/esz5-age-500/result.json /tmp/esz5-age-1000/result.json \
+            /tmp/esz5-age-2000/result.json --output-dir /tmp/esz5-age-comparison
+```
+
+冻结配置、源数据/索引、日历和代码哈希后才运行；仅接受计划里的候选，汇总要求
+全部候选齐备。每个候选保存独立快照、prepared 数据、JSON 和中文报告，拒绝
+覆盖。原始文件按完整日期流式处理，前缀验证不作为该对照的正式输入。
+
+诊断把已结算网格的状态分为完成盘口超龄、事件未完成、坏盘口标记、非法盘口、
+不可信接收状态和缺少完成盘口，并统计可信消息接收静默与产出报价年龄。只累计
+交易日历内的网格，休市单独排除；文件首尾未结算的网格记录为未知，不能说成
+供应商丢包。扩大年龄仍拒绝未完成/异常盘口、休市前报价和跨缺格标签；不做长
+空档前填。每个 session 的原因计数与计划量守恒，逐尺度与联合有效量另列。
+
+真实数据结果及各原因解释见
+[快照年龄与长期标签对照](docs/snapshot_age_validation_2026-10-01.md)。
+
 ## 数据与产物
 
 - `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。
