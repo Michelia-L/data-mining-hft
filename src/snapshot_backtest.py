@@ -33,21 +33,15 @@ FEATURE_COLUMNS = ['spread', 'rel_spread', 'obi_l1', 'obi_multi', 'micro_dev',
                    'ret_lag_1', 'ret_lag_5', 'ret_lag_10', 'ret_lag_30', 'vol_10', 'vol_30']
 
 
-def read_prepared_window(directory, start, end, *, calendar=None, allow_partial=False,
-                         include_degraded=False, batch_size=65536):
-    """按批次读显式的 [start,end) 窗口，校验来源、时钟、盘口和 session。
+def inspect_prepared_dataset(directory, calendar, allow_partial=False, include_degraded=False):
+    """一次校验 prepared 元数据与文件哈希，供多 session 顺序读取复用。
 
-    返回完整行情序列及质量记录；不能按 learning_ready/标签有效性过滤行情。
-    训练标签在下一层单独使用，执行器只接收行情与因果特征。文件级哈希记录实际
-    内容；原始数据的记录来自数据准备 provenance，不假称重新验证全部原始消息。
+    文件级哈希绑定实际内容；原始消息的来源记录继承数据准备报告，不能假称已
+    重新验证原始消息。后续窗口读取仍逐条检查报价、因果时钟和 session。
     """
-    start, end = parse_boundary(start), parse_boundary(end)
-    if start >= end or type(batch_size) is not int or batch_size <= 0:
-        raise ValueError('Need an increasing explicit time window and positive batch size')
     directory = Path(directory).resolve()
     quality_path, parquet_path = directory / 'quality.json', directory / 'snapshots.parquet'
     report = json.loads(quality_path.read_text(encoding='utf-8'))
-    calendar = calendar or SessionCalendar()
     if (report.get('schema_version') != 1 or report.get('dataset_kind') != 'session_time_labeled_snapshots'
             or report.get('symbol') != 'ESZ5' or report.get('feature_columns') != FEATURE_COLUMNS
             or report.get('label_policy') != 'exact_target_same_continuous_block'
@@ -105,8 +99,33 @@ def read_prepared_window(directory, start, end, *, calendar=None, allow_partial=
             valid_type = pa.types.is_string(actual) or pa.types.is_large_string(actual)
         if not valid_type:
             raise ValueError(f'Prepared source schema mismatch: {field.name}')
+    return file, report, dict(parquet_sha256=sha256_file(parquet_path),
+                              quality_sha256=sha256_file(quality_path), path=str(directory))
+
+
+def read_prepared_quotes(file, report, calendar, start, end, batch_size=65536):
+    """根据 Parquet 行组时间范围跳过无关 session，只物化请求的 [start,end)。
+
+    行组统计只用于减少 IO；缺少统计时保守读取，最终仍按真实时间筛选并校验。
+    不根据 learning_ready 或未来标签剔除行情，也不事后排序掩盖输入逆序。
+    """
+    start, end = parse_boundary(start), parse_boundary(end)
+    if start >= end or type(batch_size) is not int or batch_size <= 0:
+        raise ValueError('Need an increasing explicit time window and positive batch size')
+    interval, inputs = report['interval_ms'], report['inputs']
+    columns = SNAPSHOT_SCHEMA.names + ['session_id', 'segment_id', 'continuous_block',
+        'mid_price', 'feature_valid'] + FEATURE_COLUMNS
+    for horizon in report['horizons_ms']:
+        columns += [f'label_valid_{horizon}ms', f'label_end_{horizon}ms', f'future_return_{horizon}ms']
+    clock_column = file.schema_arrow.names.index('ts_event')
+    groups = []
+    for i in range(file.metadata.num_row_groups):
+        stats = file.metadata.row_group(i).column(clock_column).statistics
+        if (stats is None or not stats.has_min_max
+                or (pd.Timestamp(stats.max) >= start and pd.Timestamp(stats.min) < end)):
+            groups.append(i)
     chunks = []
-    for batch in file.iter_batches(batch_size=batch_size, columns=columns):
+    for batch in file.iter_batches(batch_size=batch_size, columns=columns, row_groups=groups):
         frame = batch.to_pandas()
         selected = frame.loc[(frame.ts_event >= start) & (frame.ts_event < end)].copy()
         if not selected.empty:
@@ -136,11 +155,38 @@ def read_prepared_window(directory, start, end, *, calendar=None, allow_partial=
                        | (frame.session_id.to_numpy()[1:] != frame.session_id.to_numpy()[:-1]))
     if not np.array_equal(actual_change, declared_change):
         raise ValueError('Prepared continuous blocks disagree with observed gaps')
-    return frame, report, dict(parquet_sha256=sha256_file(parquet_path),
-                              quality_sha256=sha256_file(quality_path), path=str(directory))
+    return frame
 
 
-def training_samples(frame, start, end, prediction_horizon_ms, purge_ms):
+class PreparedDatasetReader:
+    """复用一次元数据/哈希检查的读取器，内存仅包含当前 session 的行情。
+
+    大训练集不必拼成完整季度 DataFrame；调用者可重复迭代训练 session 并累计
+    统计量。文件在迭代期间改变时明确拒绝，避免一个实验混用两个数据版本。
+    """
+    def __init__(self, directory, *, calendar=None, allow_partial=False, include_degraded=False):
+        self.calendar = calendar or SessionCalendar()
+        self.file, self.report, self.provenance = inspect_prepared_dataset(
+            directory, self.calendar, allow_partial, include_degraded)
+        self.paths = [Path(directory) / name for name in ('snapshots.parquet', 'quality.json')]
+        self.identities = [(p.stat().st_size, p.stat().st_mtime_ns) for p in self.paths]
+
+    def read_window(self, start, end, batch_size=65536):
+        """保留所有行情；特征与标签的训练筛选由上层独立处理。"""
+        if [(p.stat().st_size, p.stat().st_mtime_ns) for p in self.paths] != self.identities:
+            raise ValueError('Prepared files changed during experiment')
+        return read_prepared_quotes(self.file, self.report, self.calendar, start, end, batch_size)
+
+
+def read_prepared_window(directory, start, end, *, calendar=None, allow_partial=False,
+                         include_degraded=False, batch_size=65536):
+    """兼容单窗口入口；多日协议使用 PreparedDatasetReader 避免重复扫描和哈希。"""
+    reader = PreparedDatasetReader(directory, calendar=calendar, allow_partial=allow_partial,
+                                   include_degraded=include_degraded)
+    return reader.read_window(start, end, batch_size), reader.report, reader.provenance
+
+
+def training_samples(frame, start, end, prediction_horizon_ms, purge_ms, *, minimum_samples=2):
     """只筛训练样本，并验证未来目标确实在训练段内；不改变回放序列。
 
     本次窗口是唯一训练切分依据；旧 prepared split-boundary 只影响标签缓存，
@@ -150,7 +196,8 @@ def training_samples(frame, start, end, prediction_horizon_ms, purge_ms):
     """
     start, end = parse_boundary(start), parse_boundary(end)
     if (start >= end or type(prediction_horizon_ms) is not int or prediction_horizon_ms <= 0
-            or type(purge_ms) is not int or purge_ms < prediction_horizon_ms):
+            or type(purge_ms) is not int or purge_ms < prediction_horizon_ms
+            or type(minimum_samples) is not int or minimum_samples < 0):
         raise ValueError('Need an increasing training window and purge covering prediction horizon')
     times = utc_ns(frame.ts_event)
     horizon = prediction_horizon_ms * 1_000_000
@@ -168,7 +215,8 @@ def training_samples(frame, start, end, prediction_horizon_ms, purge_ms):
     if (eligible & declared & ~exact).any():
         raise ValueError('Declared valid training label crosses a gap or has no exact target')
     keep = eligible & exact
-    if keep.sum() < 2:
+    # 多 session 累积时允许本日零/一个样本，最后对全训练段检查数量；旧入口仍须至少两个。
+    if keep.sum() < minimum_samples:
         raise ValueError('Need at least two finite, purged training samples')
     prices = frame.mid_price.to_numpy(float)
     # 相对收益是本基线的预测目标，Eq.(2) 的价格差奖励仍由执行器独立计算。

@@ -193,6 +193,17 @@ class TimeExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'arrived'):
             self.run_replay(late)
 
+    def test_session_policy_does_not_foresee_truncated_file_end(self):
+        """文件截断不是已知日历收盘；日协议不能用最后一行回溯强平。"""
+        window = self.run_replay(prepared())
+        session = self.run_replay(prepared(), force_replay_end=False)
+        self.assertTrue(window['terminal_position_liquidated'])
+        self.assertEqual(session['terminal_position'], 1)
+        self.assertFalse(session['terminal_position_liquidated'])
+        self.assertEqual(session['total_trades'], 0)
+        self.assertEqual(session['total_fills'], 1)
+        self.assertNotIn('replay_end', session['risk_exits'])
+
 
 if __name__ == '__main__':
     unittest.main()

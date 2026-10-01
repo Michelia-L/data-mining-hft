@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "purpose": "development_validation",
+  "sessions": {
+    "train": ["2025-09-29", "2025-09-30"],
+    "calibration": ["2025-10-01"],
+    "validation": ["2025-10-02"],
+    "test": ["2025-10-03"]
+  },
+  "prediction_horizon_ms": 5000,
+  "reward_horizons_ms": [5000, 15000, 45000, 135000, 405000, 1215000, 3645000],
+  "latency_ms": 500,
+  "holding_review_ms": 15000,
+  "threshold": 0.000015,
+  "allow_partial": false,
+  "include_degraded": false,
+  "notes": "固定模型和等权奖励的开发协议。以半秒网格延伸三倍尺度到 7290 ticks（3645 秒），这是工程扩展，不是论文公开的完整超参数。校准与验证目前仅诊断，尚未接入 IRL 或调参。所有日期都记为开发用途。"
+}
