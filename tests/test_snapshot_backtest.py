@@ -72,6 +72,46 @@ class SnapshotBacktestTests(unittest.TestCase):
         self.assertEqual(first['model'], second['model'])
         self.assertEqual(first['results'], second['results'])
 
+    def test_old_preparation_boundaries_do_not_change_current_training(self):
+        """同一行情换旧切分，当前 X/y/样本/模型/回放均不变；缺口和当前 purge 仍有效。"""
+        old_dataset = self.root / 'old-boundaries'
+        boundaries = [BASE + pd.Timedelta(seconds=s) for s in (60, 90, 150)]
+        prepare_snapshot_dataset([self.root / 'raw.parquet'], old_dataset,
+                                 horizons_ms=(1000, 3000), boundaries=boundaries)
+        frames = [read_prepared_window(path, self.bounds['train_start'], self.bounds['test_end'])[0]
+                  for path in (self.dataset, old_dataset)]
+        self.assertLess(frames[1].label_valid_1000ms.sum(), frames[0].label_valid_1000ms.sum())
+        samples = [training_samples(f, self.bounds['train_start'], self.bounds['train_end'], 1000, 3000)
+                   for f in frames]
+        for original, changed in zip(samples[0], samples[1]):
+            np.testing.assert_array_equal(original, changed)
+        first, second = [run_snapshot_experiment(path, **self.bounds, detail=True)
+                         for path in (self.dataset, old_dataset)]
+        self.assertEqual(first['training_rows'], second['training_rows'])
+        self.assertEqual(first['model'], second['model'])
+        self.assertEqual(first['results'], second['results'])
+        self.assertGreater(second['training_label_audit']['recomputed_without_cached_valid_rows'], 0)
+        self.assertEqual(second['dataset']['prepared_split_boundaries'], [str(t) for t in boundaries])
+
+    def test_cached_labels_are_audited_but_invalid_cache_does_not_remove_samples(self):
+        """旧缓存全失效时仍按行情训练；声称有效但值/目标时刻被篡改则明确报错。"""
+        frame, _, _ = read_prepared_window(self.dataset, self.bounds['train_start'], self.bounds['test_end'])
+        args = (self.bounds['train_start'], self.bounds['train_end'], 1000, 3000)
+        original = training_samples(frame, *args)
+        invalid_cache = frame.copy()
+        invalid_cache['label_valid_1000ms'] = False
+        invalid_cache['future_return_1000ms'] = np.nan
+        invalid_cache['label_end_1000ms'] = pd.NaT
+        for a, b in zip(original, training_samples(invalid_cache, *args)):
+            np.testing.assert_array_equal(a, b)
+        row = np.flatnonzero(original[2])[0]
+        for name, value in [('future_return_1000ms', 123.),
+                            ('label_end_1000ms', BASE + pd.Timedelta(days=1))]:
+            corrupted = frame.copy()
+            corrupted.loc[row, name] = value
+            with self.assertRaisesRegex(ValueError, 'disagree'):
+                training_samples(corrupted, *args)
+
     def test_cli_json_report_no_overwrite_and_reproducibility(self):
         """同样参数得到相同冻结参数和结果；新格式生成自己的报告并拒绝覆盖。"""
         args = ['--dataset-dir', str(self.dataset), '--output-dir', str(self.root / 'output'),

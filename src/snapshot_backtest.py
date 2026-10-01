@@ -143,11 +143,15 @@ def read_prepared_window(directory, start, end, *, calendar=None, allow_partial=
 def training_samples(frame, start, end, prediction_horizon_ms, purge_ms):
     """只筛训练样本，并验证未来目标确实在训练段内；不改变回放序列。
 
-    即使文件生成时没有传 split-boundary，也独立清除最长奖励尺度跨越训练末端
-    的样本。只训练一个预测尺度，因此不要求其他离线标签均有效。目标必须精确
-    存在且在同一 session/连续区间，防止被伪造的 label_valid 掩盖缺口或泄漏。
+    本次窗口是唯一训练切分依据；旧 prepared split-boundary 只影响标签缓存，
+    不能静默删掉当前窗口的合法样本。目标必须精确存在且在同一 session/连续
+    区间，并满足最长奖励尺度的训练末端隔离。收益用匹配行情重新计算。
+    旧 label_valid/return/end 仅在声称有效时做一致性审计，不参与样本筛选或 y。
     """
     start, end = parse_boundary(start), parse_boundary(end)
+    if (start >= end or type(prediction_horizon_ms) is not int or prediction_horizon_ms <= 0
+            or type(purge_ms) is not int or purge_ms < prediction_horizon_ms):
+        raise ValueError('Need an increasing training window and purge covering prediction horizon')
     times = utc_ns(frame.ts_event)
     horizon = prediction_horizon_ms * 1_000_000
     indices = np.searchsorted(times, times + horizon)
@@ -163,14 +167,19 @@ def training_samples(frame, start, end, prediction_horizon_ms, purge_ms):
     exact = (indices < len(times)) & (times[safe] == times + horizon) & same
     if (eligible & declared & ~exact).any():
         raise ValueError('Declared valid training label crosses a gap or has no exact target')
-    keep = eligible & declared & exact
+    keep = eligible & exact
     if keep.sum() < 2:
         raise ValueError('Need at least two finite, purged training samples')
-    y = frame.loc[keep, f'future_return_{suffix}'].to_numpy(float)
-    expected = frame.mid_price.to_numpy()[safe[keep]] / frame.mid_price.to_numpy()[keep] - 1
-    ends = utc_ns(frame.loc[keep, f'label_end_{suffix}'])
-    if (not np.isfinite(y).all() or not np.allclose(y, expected, rtol=1e-10, atol=1e-12)
-            or not np.array_equal(ends, times[keep] + horizon)):
+    prices = frame.mid_price.to_numpy(float)
+    # 相对收益是本基线的预测目标，Eq.(2) 的价格差奖励仍由执行器独立计算。
+    y = (prices[safe[keep]] - prices[keep]) / prices[keep]
+    audit = keep & declared
+    cached = frame.loc[audit, f'future_return_{suffix}'].to_numpy(float)
+    expected = (prices[safe[audit]] - prices[audit]) / prices[audit]
+    ends = utc_ns(frame.loc[audit, f'label_end_{suffix}'])
+    if (not np.isfinite(y).all() or not np.isfinite(cached).all()
+            or not np.allclose(cached, expected, rtol=1e-10, atol=1e-12)
+            or not np.array_equal(ends, times[audit] + horizon)):
         raise ValueError('Training labels disagree with observed target prices or times')
     return frame.loc[keep, FEATURE_COLUMNS].to_numpy(float), y, keep
 
@@ -222,6 +231,11 @@ def run_snapshot_experiment(directory, *, train_start, train_end, test_start, te
         split={name: stamp.isoformat() for name, stamp in zip(
             ('train_start', 'train_end', 'test_start', 'test_end'), bounds)},
         training_rows=int(training_mask.sum()), training_purge_ms=max(horizons),
+        training_label_policy='recomputed_from_current_window_quotes',
+        training_label_audit=dict(cached_valid_rows=int((training_mask &
+            frame[f'label_valid_{prediction_horizon_ms}ms'].to_numpy()).sum()),
+            recomputed_without_cached_valid_rows=int((training_mask &
+            ~frame[f'label_valid_{prediction_horizon_ms}ms'].to_numpy()).sum())),
         training_first_time=str(frame.loc[training_mask, 'ts_event'].iloc[0]),
         training_last_time=str(frame.loc[training_mask, 'ts_event'].iloc[-1]),
         test_rows=len(test), test_feature_valid_rows=int(valid.sum()),
@@ -235,6 +249,7 @@ def run_snapshot_experiment(directory, *, train_start, train_end, test_start, te
                        reward_horizons_ms=horizons, reward_weights_source='fixed_equal_not_IRL'),
         dataset=dict(**provenance, calendar_sha256=calendar.sha256,
             partial_input=quality['partial_input'], degraded_input=quality['degraded_input'],
+            prepared_split_boundaries=quality['split_boundaries'],
             source_inputs=quality['inputs'], quality_sessions=quality['sessions']),
         code_sha256={name: sha256_file(BASE_DIR / name) for name in
             ('run_snapshot_backtest.py', 'src/snapshot_backtest.py', 'src/time_execution.py',
@@ -253,7 +268,8 @@ def render_report(result):
     lines = ['# 快照时间回放开发验证', '',
         '用途：开发链路验证；不是未触碰的正式测试，也不是论文完整 FMATO 实验。', '',
         f"训练样本：{result['training_rows']}；训练末端隔离：{result['training_purge_ms']} ms。",
-        f"测试行情：{result['test_rows']}；特征有效：{result['test_feature_valid_rows']}。", '',
+        f"测试行情：{result['test_rows']}；特征有效：{result['test_feature_valid_rows']}。",
+        '训练样本与收益由当前窗口行情重算，旧 prepared 切分仅记录与审计。', '',
         '| 基线 | 完整交易 | 成交 | 毛盈亏 USD | 成本 USD | 净盈亏 USD | 成熟 OE | 期末未成熟 OE |',
         '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |']
     for row in result['results']:
