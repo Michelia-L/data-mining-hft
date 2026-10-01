@@ -1,0 +1,28 @@
+{
+  "calendar_id": "CME_ES_2025_09_15_to_12_15_v1",
+  "symbol": "ESZ5",
+  "timezone": "America/Chicago",
+  "valid_from": "2025-09-15",
+  "valid_through": "2025-12-15",
+  "regular": {
+    "open_day_offset": -1,
+    "open": "17:00",
+    "close": "16:00",
+    "breaks": [{"day_offset": 0, "start": "15:15", "end": "15:30"}]
+  },
+  "closed_session_dates": ["2025-11-27"],
+  "overrides": {
+    "2025-11-28": {
+      "open_day_offset": -2,
+      "open": "17:00",
+      "close": "12:15",
+      "breaks": [{"day_offset": -1, "start": "12:00", "end": "17:00"}]
+    }
+  },
+  "sources": [
+    "https://www.cmegroup.com/markets/equities/sp/e-mini-sandp500.contractSpecs.html",
+    "https://www.cmegroup.com/trading/equity-index/fairvaluefaq.html",
+    "https://www.ampfutures.com/hubfs/CME%20Group%20Globex%20-%20Thanksgiving%20Holiday%20Schedule%20-%20November%2026-28%2C%202025.png"
+  ],
+  "notes": "仅覆盖当前 ESZ5 数据所需日期，不是通用 CME 日历。感恩节表为 CME 发布、AMP 转载的原表：11/27 12:00 CT 暂停、17:00 CT 重开、11/28 12:15 CT 结束，归入 11/28 trade date。临时停机由数据质量与网格缺口处理，不自动补行情。快照边界采用 (open, close]，仅代表边界前已知盘口，不代表收盘时仍可下单。"
+}
