@@ -51,11 +51,14 @@ class TimeExecutionEngine:
 """
     def __init__(self, reward, *, interval_ms=500, latency_ms=500,
                  holding_review_ms=15000, calendar=None,
-                 initial_capital=INITIAL_CAPITAL, quantity=QUANTITY, threshold=None):
+                 initial_capital=INITIAL_CAPITAL, quantity=QUANTITY, threshold=None,
+                 force_replay_end=True):
         """半秒网格、半秒延迟、15 秒复核均为项目设定，不是论文公开的执行参数。
 
 延迟可以不是网格倍数：使用到期后首条可用且连续的行情，不提前插值成交。
 奖励前瞻期必须是网格倍数；本入口用 price_difference 和固定权重隔离时间改动。
+force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协议设为 False，
+只按已知日历或当时可见的风险退出，缺少尾部行情时保留未平仓风险。
 """
         settings = (interval_ms, latency_ms, holding_review_ms)
         horizons = tuple(reward.horizons)
@@ -72,6 +75,10 @@ class TimeExecutionEngine:
                 or initial_capital <= 0 or quantity <= 0 or self.threshold < 0):
             raise ValueError('Invalid account or threshold settings')
         self.reward, self.calendar = reward, calendar or SessionCalendar()
+        if type(force_replay_end) is not bool:
+            raise ValueError('force_replay_end must be boolean')
+        # 小窗口保留旧期末退出假设；完整 session 协议禁用，避免缺尾时回溯强平。
+        self.force_replay_end = force_replay_end
         self.interval_ms, self.latency_ms = interval_ms, latency_ms
         self.holding_review_ms = holding_review_ms
         self.initial_capital, self.quantity = initial_capital, quantity
@@ -168,7 +175,7 @@ class TimeExecutionEngine:
                             observed_time=timestamp(times[now]), target_times=[timestamp(t) for t in targets]))
 
         for row, clock in enumerate(times):
-            terminal = row == n - 1
+            terminal = row == n - 1 and self.force_replay_end
             segment_end = ends[segments[row]]
             tradable = clock < segment_end
             scheduled_exit = tradable and clock + step >= segment_end
@@ -247,6 +254,7 @@ class TimeExecutionEngine:
             net_curve=[float(net_values[i] / self.initial_capital) for i in points],
             gross_curve=[float(gross_values[i] / self.initial_capital) for i in points],
             selector_protocol='static_baseline',
+            force_replay_end=self.force_replay_end,
             execution_assumption='Aggressive one-contract quote simulation; no queue, impact or margin model.')
         if detail:
             result.update(fills=account.fills, trades=account.trades, decisions=decisions,
