@@ -71,7 +71,7 @@ class PeriodOESelector(BaseSelector):
         """拒绝 per-order 回调，避免悄悄变回 CausalEventUCB 协议。"""
         raise ValueError('Period selector accepts complete period feedback only')
 
-    def observe_period(self, version, owner, reward):
+    def observe_period(self, version, owner, reward, *, context=None):
         """W 为每个完整期间 Eq.(5) 均值的等权运行平均；不按成交数量加权期间。
 
         n 和反馈次数分开：无订单、坏标签或仍在等待的已选择期间也占一次探索，
@@ -153,7 +153,11 @@ class PeriodOrderBook:
                   'pending_orders' if bucket['pending'] else 'no_orders' if not bucket['orders'] else
                   'incomplete_orders' if bucket['statuses'].get('matured',0)!=bucket['orders'] else 'matured')
         reward = bucket['reward_sum']/bucket['orders'] if status=='matured' else None
-        if reward is not None:self.selector.observe_period(bucket['model_version_id'],bucket['owner'],reward)
+        if reward is not None:
+            # UCB 保持原数值；ARS 需要真实观察时刻和期间身份，不能把旧反馈冒充当前期间。
+            self.selector.observe_period(bucket['model_version_id'],bucket['owner'],reward,
+                context=dict(session_id=bucket['session_id'],period_index=bucket['period_index'],
+                             observed_at_ns=int(now),last_origin_ns=bucket['last_origin_ns']))
         self.completed.append(bucket | dict(statuses=dict(bucket['statuses']), status=status,
             reward=reward, observed_at_ns=int(now), terminal_audit=terminal,
             updated_selector=reward is not None))
