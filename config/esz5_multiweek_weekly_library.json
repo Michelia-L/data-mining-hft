@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "purpose": "development_weekly_light_library",
+  "history_start_session": "2025-10-02",
+  "bootstrap_session": "2025-10-06",
+  "through_session": "2025-10-21",
+  "evaluation_sessions": ["2025-10-06", "2025-10-07", "2025-10-08", "2025-10-09", "2025-10-10", "2025-10-13", "2025-10-14", "2025-10-15", "2025-10-16", "2025-10-17", "2025-10-20", "2025-10-21"],
+  "history_session_counts": [1, 2],
+  "age_candidates_ms": [500, 1000, 2000],
+  "prediction_horizon_ms": 5000,
+  "purge_ms": 3645000,
+  "ridge_alpha": 1.0,
+  "tree_max_depth": 4,
+  "tree_min_samples_leaf": 50,
+  "tree_sample_limit": 50000,
+  "seed": 42,
+  "allow_partial": false,
+  "include_degraded": false,
+  "notes": "真实多周开发：10-06启动、10-13及10-20按ISO周首session更新，各用最近1/2个已结束session；短历史、三组工程特征、原预测与purge及超参数保留，不按结果延长历史或选年龄。跨周训练可使用此前已结束开发session，所有日期记为开发，非完整FMATO交易实验。"
+}
