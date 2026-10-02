@@ -83,7 +83,7 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
         self.holding_review_ms = holding_review_ms
         self.initial_capital, self.quantity = initial_capital, quantity
 
-    def run_backtest(self, selector, frame, predictions, *, detail=False):
+    def run_backtest(self, selector, frame, predictions, *, detail=False, model_version_ids=None):
         """每行执行到期意图、结算成熟奖励、盯市，再依据当前有效特征发新意图。
 
 意外缺口只能在下一条行情到达时发现：撤销旧意图，在这条行情上风险平仓，
@@ -91,6 +91,10 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
 计划暂停/收盘在日历已知的最后一个严格早于边界的网格主动退出；边界快照
 只用于盯市和奖励，不假定边界仍能成交。退出行情缺失时，持仓延续到首条
 可交易行情再处理。期末强平也是明确的离线工程假设，不能当作实盘撮合。
+
+可选 model_version_ids 是 N 个当前可见库版本 ID；不提供时保留旧基线口径。
+换版撤销旧待成交意图，已经成交的仓位/奖励仍属于原开仓版本。未平仓资产
+不能因换版消失，旧反馈不能改标为新版本。静态选择器仍不按反馈换候选。
 """
         if not isinstance(selector, SingleModelSelector) or selector.needs_shadow:
             raise ValueError('Time replay currently supports static baseline selectors only')
@@ -122,6 +126,12 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
         predictions = np.asarray(predictions, float)
         if predictions.shape != (n, selector.k) or not np.isfinite(predictions[available]).all():
             raise ValueError('Finite causal predictions aligned to feature-valid rows required')
+        versions = None
+        if model_version_ids is not None:
+            versions = np.asarray(model_version_ids, dtype=object)
+            if (versions.shape != (n,) or any(v is not None and (not isinstance(v, str) or not v) for v in versions)
+                    or any(v is None for v in versions[available])):
+                raise ValueError('Visible version IDs required on feature-valid rows')
         sessions, segments = frame.session_id.to_numpy(), frame.segment_id.to_numpy()
         changed = np.r_[False, (np.diff(times) != step) | (sessions[1:] != sessions[:-1])
                          | (segments[1:] != segments[:-1])]
@@ -138,6 +148,13 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
         observations, decisions = [], []
         gross_values, net_values = [], []
         matured_orders = 0
+        position_version = None
+        version_audit = {}
+
+        def audit_version(version, name):
+            """版本级计数只在显式提供身份时开启，不改变默认结果 schema。"""
+            if versions is not None:
+                version_audit.setdefault(version, Counter())[name] += 1
 
         def mature(queue, now, kind):
             """仅在最长前瞻到期后检查已到达行情；缺格奖励不补零、不送入选择器。
@@ -159,6 +176,7 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                 else:
                     status = 'matured'
                 statuses[kind][status] += 1
+                audit_version(item.get('model_version_id'), kind + '_' + status)
                 if status != 'matured':
                     continue
                 values = self.reward.features_from_prices(mid[origin], mid[safe], item['side'])
@@ -173,6 +191,8 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                         observations.append(dict(kind=kind, owner=item['owner'], reward=score,
                             origin_time=timestamp(times[origin]), due_time=timestamp(targets[-1]),
                             observed_time=timestamp(times[now]), target_times=[timestamp(t) for t in targets]))
+                        if versions is not None:
+                            observations[-1]['model_version_id'] = item['model_version_id']
 
         for row, clock in enumerate(times):
             terminal = row == n - 1 and self.force_replay_end
@@ -188,6 +208,11 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
             if terminal and tradable:
                 reason = 'replay_end'
             fills = []
+            intent_version = None
+            if versions is not None and row and versions[row] != versions[row - 1]:
+                # 只根据当前可见换版撤销旧意图；仓位和成熟队列继续保留原身份。
+                cancelled['model_version_change'] += len(intents)
+                intents.clear()
             if reason or not tradable:
                 cancelled[reason or 'closed_boundary'] += len(intents)
                 intents.clear()
@@ -202,13 +227,27 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                     # 若到期意图合并到同一行情，只执行最新一个，显式记录其余被取代。
                     cancelled['superseded'] += len(eligible) - 1
                     intent = eligible[-1]
+                    intent_version = intent.get('model_version_id')
                     fills = account.advance(int(clock), intent['side'], intent['owner'], mid[row], bid[row], ask[row])
                     for fill in fills:
                         fill['intent_time'] = timestamp(intent['origin'])
                         fill['execution_due_time'] = timestamp(intent['due'])
             for fill in fills:
                 fill['execution_reason'] = reason or 'delayed_intent'
-                orders.append(dict(row=row, side=fill['side'], owner=fill['owner']))
+                order = dict(row=row, side=fill['side'], owner=fill['owner'])
+                if versions is not None:
+                    # 退出账本和 OE 沿用原开仓身份；触发退出的新信号身份另列。
+                    fill['model_version_id'] = intent_version if fill['opening'] else position_version
+                    fill['trigger_model_version_id'] = intent_version
+                    audit_version(fill['model_version_id'], 'fills')
+                    order['model_version_id'] = fill['model_version_id']
+                    if fill['opening']:
+                        position_version = fill['model_version_id']
+                    else:
+                        account.trades[-1].update(model_version_id=position_version,
+                            exit_trigger_model_version_id=intent_version)
+                        position_version = None
+                orders.append(order)
             mature(orders, row, 'OE')
             mature(signals, row, 'ME')
             gross = account.gross_equity_change(mid[row])
@@ -220,17 +259,26 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                 prediction = (0. if selector.flat else float(predictions[row].mean())
                               if selector.ensemble else predictions[row, owner])
                 direction = int(prediction > self.threshold) - int(prediction < -self.threshold)
-                signals.append(dict(row=row, side=direction, owner=owner))
-                intents.append(dict(origin=int(clock), due=int(clock) + self.latency_ms * 1_000_000,
-                                    side=direction, owner=owner))
+                signal = dict(row=row, side=direction, owner=owner)
+                intent = dict(origin=int(clock), due=int(clock) + self.latency_ms * 1_000_000,
+                              side=direction, owner=owner)
+                if versions is not None:
+                    signal['model_version_id'] = intent['model_version_id'] = versions[row]
+                    audit_version(versions[row], 'decisions')
+                signals.append(signal)
+                intents.append(intent)
                 if detail:
                     decisions.append(dict(ts_event=timestamp(clock), owner=owner, direction=direction))
+                    if versions is not None:
+                        decisions[-1]['model_version_id'] = versions[row]
 
         equity = np.r_[self.initial_capital, self.initial_capital + np.asarray(net_values)]
         peaks = np.maximum.accumulate(equity)
         holding = np.array([t['holding_ms'] for t in account.trades])
         for kind, queue in [('OE', orders), ('ME', signals)]:
             statuses[kind]['unmatured_at_end'] = len(queue)
+            for item in queue:
+                audit_version(item.get('model_version_id'), kind + '_unmatured_at_end')
         points = sorted(set([0, n - 1] + list(range(0, n, max(1, n // 300)))))
         result = dict(strategy=selector.name, replay_rows=n, feature_valid_rows=int(available.sum()),
             decision_count=len(selector.action_history), total_trades=len(account.trades), total_fills=len(account.fills),
@@ -259,4 +307,9 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
         if detail:
             result.update(fills=account.fills, trades=account.trades, decisions=decisions,
                           reward_observations=observations, equity_usd=equity[1:].tolist())
+        if versions is not None:
+            result.update(model_versions_seen=sorted(set(versions) - {None}),
+                model_version_audit={k: dict(v) for k, v in version_audit.items()},
+                terminal_position_model_version_id=position_version,
+                model_version_policy='cancel_old_intents_keep_open_owner_and_pending_reward_identity')
         return result

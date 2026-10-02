@@ -294,6 +294,38 @@ Ridge 使用全部合法样本，树用固定种子的最多 50,000 行均匀抽
 选择器，预测误差不等于交易收益。结果与限制见
 [按周轻模型库验证记录](docs/weekly_library_validation_2026-10-02.md)。
 
+### 多模型时间 OE 校准与冻结选择交易评估
+
+`run_library_oe.py` 将上述模型库接入相同真实时间执行器：现金、原固定 Ridge
+门槛 ×1/×2/×4，加全部 12 个轻模型的原门槛候选，共 16 个。校准段选择专家、
+学习 OE 权重和冻结候选 ID，验证/测试不重新选优；模型参数按冻结周规则更新，
+因此冻结的是身份和规则，不是全程相同的数值系数。
+
+```bash
+# 执行器新增身份审计后源码哈希改变，旧模型产物须另存新计划重建。
+python run_weekly_library.py freeze --config config/esz5_weekly_library_development.json \
+  --dataset-dirs /tmp/esz5-age-500/prepared /tmp/esz5-age-1000/prepared \
+                 /tmp/esz5-age-2000/prepared --output-dir /tmp/esz5-library-oe-build-plan
+python run_weekly_library.py build --plan /tmp/esz5-library-oe-build-plan/plan.json \
+  --output-dir /tmp/esz5-library-oe-models
+python run_library_oe.py freeze --config config/esz5_library_oe_development.json \
+  --library /tmp/esz5-library-oe-models/library.json --output-dir /tmp/esz5-library-oe-plan
+python run_library_oe.py run --plan /tmp/esz5-library-oe-plan/plan.json \
+  --output-dir /tmp/esz5-library-oe-result
+```
+
+输出新目录中的 `result.json` 与中文 `report.md`，保留全候选成熟订单/费用/净利、
+现金/等权/校准净利专家/学习后的冻结选择和求解失败。`--detail` 增加订单、
+交易、决策和到期 OE 的版本 ID，资金退出和奖励沿用原开仓归属，触发退出的
+版本另列；换版撤销旧待成交意图，不清零旧仓位或改写未成熟反馈。
+
+沿用每日独立账户，日末未执行意图和未成熟反馈显式记录、不传给下一日模型；
+缺尾未平仓使汇总净利未定义。这是工程边界协议，不是论文未公开细节的还原。
+静态候选不按奖励切换，线性权重重评不改变同一候选的成交/账本。
+完整样本、失败与限制见 [多模型时间 OE 验证](docs/library_oe_validation_2026-10-02.md)。
+当前真实窗口未跨周，跨周更新/归属已用合成 session 验证；尚无时间 ME IRL
+或论文固定期间 UCB/ARS，不能称为完整 FMATO。
+
 ## 数据与产物
 
 - `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。
