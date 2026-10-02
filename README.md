@@ -419,6 +419,31 @@ python run_reward_audit.py run --plan /tmp/esz5-reward-audit-plan/plan.json \
 也不在当前模型候选中，不能说已获得可用的动态交易奖励。
 证据与限制见 [OE IRL 可表示性审计](docs/reward_audit_validation_2026-10-02.md)。
 
+### 校准 OE 学习与在线 UCB/ARS 联动
+
+`run_learned_oe.py` 在校准段重算候选订单均值，新增只要求 `sum(w)=1`
+的完整有限策略最大间隔学习，再在相同最优间隔上以最小 L1 消歧。
+专家自身包含在完整 oracle 中，最优间隔至多为零，避免旧迭代约束子集在
+无限正负权下可能无界。它仍是 Algorithm 1 的工程近似，权重不唯一可识别。
+旧 simplex/signed_box 拟合一并报告，但不静默替换原诊断或使用其失败权重。
+
+```bash
+python run_learned_oe.py freeze --config config/esz5_learned_oe_development.json \
+  --library /tmp/esz5-weekly-library/library.json --output-dir /tmp/esz5-learned-oe-plan
+python run_learned_oe.py run --plan /tmp/esz5-learned-oe-plan/plan.json \
+  --output-dir /tmp/esz5-learned-oe-result
+```
+
+保留原 18 个等权/静态控制，加学习奖励 UCB 与最近/平移成熟双 ARS。
+校准一次冻结权重，同时接入真实期间与历史子回测评分；之后不按收益改权、
+选年龄或调探索系数。在线动作集保持原模型库。工程门控要求专家属于库且
+库中全部模型有校准成熟 OE；失败时三项策略明确阻断，收益和成交均为 null，
+不能当作现金零收益。大正负权保留原值，不裁剪或再次归一化。
+
+合成七个 session 已验证真实建库、学习与跨周执行联动；当前真实开发数据
+三个年龄均未通过执行门控，仍不能声称取得可用 FMATO 实验结果。
+依据、数值与后续研究差异见 [OE 学习联动验证](docs/learned_oe_validation_2026-10-02.md)。
+
 ## 数据与产物
 
 - `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。

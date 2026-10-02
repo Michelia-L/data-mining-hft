@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "purpose": "development_learned_OE_selection",
+  "ars_protocol_file": "esz5_history_ars_development.json",
+  "learner": "sum_only_full_finite_max_margin_min_L1_tie_break",
+  "execution_gate": "expert_in_library_all_library_OE_observed",
+  "notes": "保留原校准净利专家及成熟订单资格，仅等式完整有限策略最大间隔+最优面最小L1是工程近似，不把旧诊断见证当学习。保留原12模型动作与18控制，专家不在动作集或库校准OE不完整时阻断，未执行净利为null。校准一次冻结奖励并接UCB/双ARS，不按测试收益调C或权重；全部日期仍为开发。"
+}
