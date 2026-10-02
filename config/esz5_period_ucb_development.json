@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "purpose": "development_period_OE_UCB",
+  "oe_protocol_file": "esz5_library_oe_development.json",
+  "selection_period_ms": 300000,
+  "exploration_c_price": 1.0,
+  "reward_source": "equal_weight_control",
+  "stages": ["validation", "test"],
+  "notes": "5 分钟引用论文 Algorithm 2 例子，C=1 个价格点为项目设定。只验证选择与成熟反馈，不将此前不可表示专家的 IRL 权重当作成功奖励。全部年龄、同期间轮换、现金、原 Ridge 和所有固定库候选保留；每天独立，不跨日迁移反馈，全部日期为开发用途。"
+}

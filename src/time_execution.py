@@ -2,7 +2,7 @@
 
 论文物理第 3 页 §3.1 定义定时 tick，第 4 页 Eq.(2)–(4) 从预测/成交
 时刻计算未来中间价差。本模块用 UTC 纳秒驱动、用毫秒配置；不把缺格后的
-下一行当成目标价格。不实现论文 Algorithm 2/3，也不复用事件选择器的窗口。
+下一行当成目标价格。固定期间 OE-UCB 通过独立期间协议接入；不复用事件窗口。
 """
 from collections import Counter, deque
 
@@ -12,6 +12,7 @@ import pandas as pd
 from src.config import INITIAL_CAPITAL, INSTRUMENT_CONFIG, QUANTITY
 from src.execution_engine import Account
 from src.model_selector import SingleModelSelector
+from src.period_ucb import PeriodOESelector, PeriodOrderBook
 from src.snapshot_dataset import SessionCalendar, utc_ns
 
 
@@ -47,7 +48,7 @@ class TimeExecutionEngine:
     """只读取当时行情和冻结预测的时间回放器；不消费任何离线未来标签。
 
 固定选择器也记录成熟反馈，便于验证 ME/OE 的观察时点，但不会据此换模型。
-动态选择器暂不接入，防止将 per-order 反馈或毫秒时钟静默套入旧事件协议。
+期间选择器只能接收完整期间的 OE 均值；旧事件选择器仍拒绝直接接入。
 """
     def __init__(self, reward, *, interval_ms=500, latency_ms=500,
                  holding_review_ms=15000, calendar=None,
@@ -96,10 +97,13 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
 换版撤销旧待成交意图，已经成交的仓位/奖励仍属于原开仓版本。未平仓资产
 不能因换版消失，旧反馈不能改标为新版本。静态选择器仍不按反馈换候选。
 """
-        if not isinstance(selector, SingleModelSelector) or selector.needs_shadow:
-            raise ValueError('Time replay currently supports static baseline selectors only')
+        periodic = isinstance(selector, PeriodOESelector)
+        if not isinstance(selector, (SingleModelSelector, PeriodOESelector)) or selector.needs_shadow:
+            raise ValueError('Time replay supports static or explicit period OE selectors only')
         if selector.action_history or selector.reward_history:
             raise ValueError('Use a fresh selector for each replay')
+        if periodic and (selector.period_selections or selector.period_ms % self.interval_ms):
+            raise ValueError('Fresh selector and grid-aligned period required')
         frame = frame.reset_index(drop=True)
         n = len(frame)
         if n < 2:
@@ -142,6 +146,7 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
         intents, orders, signals = deque(), deque(), deque()
         hs = np.array(self.reward.horizons, dtype=np.int64) * 1_000_000
         longest = int(hs[-1])
+        periods = PeriodOrderBook(selector, self.calendar, longest) if periodic else None
         feature_sum = np.zeros(len(hs))
         statuses = {'ME': Counter(), 'OE': Counter()}
         exits, cancelled = Counter(), Counter()
@@ -177,6 +182,11 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                     status = 'matured'
                 statuses[kind][status] += 1
                 audit_version(item.get('model_version_id'), kind + '_' + status)
+                if periodic and kind == 'OE':
+                    # 单笔回调仅解决桶中一单；缺格也必须解决，不能从分母删除。
+                    score = (self.reward.score(self.reward.features_from_prices(mid[origin], mid[safe], item['side']))
+                             if status == 'matured' else None)
+                    periods.resolve(item['period_key'], status, score)
                 if status != 'matured':
                     continue
                 values = self.reward.features_from_prices(mid[origin], mid[safe], item['side'])
@@ -186,13 +196,16 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                 if selector.reward_type == kind:
                     score = self.reward.score(values)
                     # 固定基线只记录反馈；传入从回放起点开始的毫秒，而不是行号。
-                    selector.observe(item['owner'], score, int((times[now] - times[0]) // 1_000_000))
+                    if not periodic:
+                        selector.observe(item['owner'], score, int((times[now] - times[0]) // 1_000_000))
                     if detail:
                         observations.append(dict(kind=kind, owner=item['owner'], reward=score,
                             origin_time=timestamp(times[origin]), due_time=timestamp(targets[-1]),
                             observed_time=timestamp(times[now]), target_times=[timestamp(t) for t in targets]))
                         if versions is not None:
                             observations[-1]['model_version_id'] = item['model_version_id']
+                        if periodic:
+                            observations[-1]['updates_selector'] = False
 
         for row, clock in enumerate(times):
             terminal = row == n - 1 and self.force_replay_end
@@ -247,15 +260,25 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                         account.trades[-1].update(model_version_id=position_version,
                             exit_trigger_model_version_id=intent_version)
                         position_version = None
+                if periodic:
+                    # 按真实成交时刻归期间，退出的模型/版本仍归原仓位。
+                    order['period_key'] = periods.add_order(sessions[row],
+                        order.get('model_version_id', 'unversioned'), fill['owner'], int(clock))
+                    fill['reward_period_index'] = order['period_key'][2]
                 orders.append(order)
             mature(orders, row, 'OE')
-            mature(signals, row, 'ME')
+            if not periodic:
+                mature(signals, row, 'ME')
+            else:
+                # 顺序为实际成交 → 完整到期标签 → 已结束期间 → 本 tick 新选择。
+                periods.advance(int(clock))
             gross = account.gross_equity_change(mid[row])
             gross_values.append(gross)
             net_values.append(gross - account.costs)
             if available[row] and tradable and not scheduled_exit and not terminal:
                 elapsed_ms = int((clock - times[0]) // 1_000_000)
-                owner = selector.select_model(elapsed_ms)
+                owner = (periods.choose(sessions[row], versions[row] if versions is not None else 'unversioned', int(clock))
+                         if periodic else selector.select_model(elapsed_ms))
                 prediction = (0. if selector.flat else float(predictions[row].mean())
                               if selector.ensemble else predictions[row, owner])
                 direction = int(prediction > self.threshold) - int(prediction < -self.threshold)
@@ -265,7 +288,8 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                 if versions is not None:
                     signal['model_version_id'] = intent['model_version_id'] = versions[row]
                     audit_version(versions[row], 'decisions')
-                signals.append(signal)
+                if not periodic:
+                    signals.append(signal)
                 intents.append(intent)
                 if detail:
                     decisions.append(dict(ts_event=timestamp(clock), owner=owner, direction=direction))
@@ -304,6 +328,16 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
             selector_protocol='static_baseline',
             force_replay_end=self.force_replay_end,
             execution_assumption='Aggressive one-contract quote simulation; no queue, impact or margin model.')
+        if periodic:
+            period_results = periods.finish(int(times[-1]))
+            result.update(selector_protocol='fixed_period_OE_' + selector.mode,
+                selection_period_ms=selector.period_ms, exploration_c_price=selector.c,
+                period_feedback=period_results, period_selections=selector.period_selections,
+                period_status_counts=dict(Counter(p['status'] for p in period_results)),
+                selector_version_statistics=selector.summary(),
+                period_assumptions='session_open_wall_clock_hold_choice_complete_orders_equal_period_W_version_separated',
+                model_switch_policy='keep_position_original_owner_and_due_intents_until_execution_or_version_change')
+            result['reward_status'].pop('ME')  # 本协议没有模型预测 ME 队列，不声称实现 ME 学习。
         if detail:
             result.update(fills=account.fills, trades=account.trades, decisions=decisions,
                           reward_observations=observations, equity_usd=equity[1:].tolist())
