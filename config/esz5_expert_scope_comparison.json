@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "purpose": "development_OE_expert_scope_comparison",
+  "expert_scopes": ["all_candidates", "online_library"],
+  "weight_constraints": ["simplex", "signed_box", "sum_only"],
+  "oracle_scope": "all_eligible_calibration_candidates",
+  "notes": [
+    "专家先按各自来源内已结算候选的校准净利选择，之后才检查成熟奖励，不换次优。",
+    "两个来源面对相同完整奖励矩阵，现金和固定Ridge仍为优化参照；不改变在线动作集。",
+    "所有年龄和约束保留；仅归档开发校准对照，不自动激活权重。"
+  ]
+}
