@@ -394,6 +394,31 @@ python run_history_ars.py run --plan /tmp/esz5-history-ars-plan/plan.json \
 当时可见行情，三种报价年龄及负结果均保留，不增加未触碰测试集的声明。
 方法与真实覆盖见 [历史窗口 OE-ARS 验证](docs/history_ars_validation_2026-10-02.md)。
 
+### OE IRL 失败归因：校准可表示性审计
+
+`run_reward_audit.py` 分别检查非负单纯形、`[-1,1]` 有符号盒和仅
+`sum(w)=1` 三个集合。最后一个对应 Eq.(3) 的明确条件；前两种为项目
+附加约束。可行时保存最小 L1 诊断见证，不可行时保存可重算的数值证书，
+区分“附加边界排除了专家”和“当前特征/专家在仅等式条件下仍不可表示”。
+
+```bash
+# 输入是已有多模型 OE 结果，允许保留其旧源码身份；只审计其中校准段。
+python run_reward_audit.py freeze --config config/esz5_reward_audit_development.json \
+  --input /tmp/esz5-library-oe-result/result.json --output-dir /tmp/esz5-reward-audit-plan
+python run_reward_audit.py run --plan /tmp/esz5-reward-audit-plan/plan.json \
+  --output-dir /tmp/esz5-reward-audit-result
+```
+
+输出新建目录的 `result.json` 和中文 `report.md`。重算校准摘要以核对
+每日账本，保留所有年龄、旧专家/拟合、资格排除原因、矩阵和证书；验证/
+测试数值不参与诊断。历史输入文件、历史源码身份和本次诊断源码分别绑定。
+
+最小 L1 是诊断消歧，不是 Algorithm 1 的学习目标；见证不用于交易。
+真实归档中 500ms 缺成熟观察、1000ms 仅等式仍不可行、2000ms 仅等式
+可行但盒约束不可行。2000ms 见证最大绝对权重约 6.94，现金专家身份
+也不在当前模型候选中，不能说已获得可用的动态交易奖励。
+证据与限制见 [OE IRL 可表示性审计](docs/reward_audit_validation_2026-10-02.md)。
+
 ## 数据与产物
 
 - `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。
