@@ -359,7 +359,40 @@ python run_period_ucb.py run --plan /tmp/esz5-period-plan/plan.json \
 
 手算、未来扰动、合成跨周和真实结果见
 [固定期间 OE-UCB 验证](docs/period_ucb_validation_2026-10-02.md)。尚缺成功
-IRL 奖励联动、时间 ME IRL、历史窗口 ARS、真实跨周与全量长期评估。
+IRL 奖励联动、时间 ME IRL、真实跨周与全量长期评估；下一入口增加历史窗口 ARS。
+
+### 历史窗口 OE-ARS：严格最近与平移成熟双对照
+
+`run_history_ars.py` 对应论文第 5 页 Algorithm 3：当前模型使用真实账户
+最新完整成熟期间 OE，其他模型每次独立回测 30 分钟，按可观察分数最大值
+选择下一 5 分钟模型。历史账户每次空仓重启，特征在窗口内重新预热；
+不同于旧 `CausalShadowARS` 从回放起点持续运行的影子账户。
+
+最长奖励前瞻为 3645000ms，超过 30 分钟，原文没有说明最近窗口内订单
+如何完整成熟。因此同时冻结两种工程对照，不按结果选择其中一种：
+
+- `recent`：严格 `[t-W,t)`。订单未成熟就保留 None，不使用 t 之后价格。
+- `matured`：向前平移最长前瞻，`[t-H_max-W,t-H_max)`；评价最多观察到 t。
+  这不是论文唯一规定，缺格、跨 session 或版本历史不足仍不能评分。
+
+```bash
+# 当前源码身份有效的周库可复用；库依赖源码改变时需另存计划重建。
+python run_history_ars.py freeze --config config/esz5_history_ars_development.json \
+  --library /tmp/esz5-current-library/library.json --output-dir /tmp/esz5-history-ars-plan
+python run_history_ars.py run --plan /tmp/esz5-history-ars-plan/plan.json \
+  --output-dir /tmp/esz5-history-ars-result
+```
+
+输出 `result.json` 和中文 `report.md`；保留原 16 个策略，加两种 ARS 共 18 个。
+历史窗精确末格可交易时主动退出，缺边界报价则完整评分未定义；窗口中任意
+订单失效/未成熟、无订单均不补零。旧历史窗口分数不延用；全不可观察时
+按声明顺序轮换，负奖励不与虚构初始化零比较。上述边界、冷启动、期间锁定、
+当前模型使用最新成熟期间及稳定并列消歧均是工程约定。实时共享账户换模型
+不强平，每日状态独立，旧版本反馈不更新新版。
+
+仍使用预声明等权奖励，没有成功 IRL 或完整 FMATO 收益复现。全过程只读
+当时可见行情，三种报价年龄及负结果均保留，不增加未触碰测试集的声明。
+方法与真实覆盖见 [历史窗口 OE-ARS 验证](docs/history_ars_validation_2026-10-02.md)。
 
 ## 数据与产物
 

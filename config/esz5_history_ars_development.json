@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "purpose": "development_history_OE_ARS",
+  "period_protocol_file": "esz5_period_ucb_development.json",
+  "history_window_ms": 1800000,
+  "alignments": ["recent", "matured"],
+  "tie_tolerance_reward": 1e-9,
+  "notes": "30 分钟取 Algorithm 3 例子，选择期间与奖励前瞻沿用旧协议。原文没有解释最长一小时以上奖励在最近30分钟如何成熟，用户明确选择同时保留严格最近窗口和向前平移最大前瞻的成熟窗口，分别标为工程口径。窗口空仓重启、局部特征预热、精确边界退出、不可观察分数排除及全不可观察轮换均为工程假设；不按结果择窗或使用不可表示专家的 IRL 诊断权重。"
+}
