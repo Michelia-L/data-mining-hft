@@ -1,6 +1,6 @@
 # data-mining-hft
 
-FMATO 思路的课程工程实验，参考 [原论文](1679894.pdf)。**尚未复现原论文完整算法或实验数值。** 当前实现的是事件级 UCB、连续影子账户 ARS、有限策略奖励学习及美元记账，方法对照见 [论文定义与 20 项审阅处理](docs/paper_alignment.md)。
+FMATO 思路的课程工程实验，参考 [原论文](1679894.pdf)。**尚未复现原论文完整算法或实验数值。** 默认入口实现事件级 UCB、连续影子账户 ARS、有限策略奖励学习及美元记账；另有定时快照、时间 OE 校准和按周轻模型库的独立入口。方法对照见 [论文定义与 20 项审阅处理](docs/paper_alignment.md)。
 
 **旧版回测包含前视偏差，其收益与延迟结论已撤回。** 当前版本清除跨切分标签，奖励成熟后才更新选择器，按下一事件行情成交，逐事件盯市并在期末平仓。论文未公开的策略优化器使用明确标注的有限策略近似；不宣称等价复刻原生产系统。
 
@@ -260,6 +260,39 @@ OE 均值仅覆盖全部尺度完整成熟的订单，零订单为未定义；�
 真实五 session 中，500ms 校准段仍无成熟 OE，明确阻止拟合；1000/2000ms
 对照能够求解，但专家和学习后的选择均为现金，没有正利润交易专家。详细结果、
 假设与验证见 [时间 OE IRL 验证记录](docs/time_irl_validation_2026-10-02.md)。
+
+### 按周构建多特征与历史期轻模型库
+
+`run_weekly_library.py` 对应论文 §3.2/Table 2：价格、盘口深度、价量交叉
+三组特征 × Ridge/浅树 × 两种完整历史 session 窗口，每版 12 个候选。
+量特征使用前五档双边挂单量，**不是论文的成交量数据**；完整公式、1/2 session
+窗口、树抽样与启动日都是明确工程设定。
+
+```bash
+# 复用之前的全部三个 prepared 对照，不重新选日期或更改严格采样。
+python run_weekly_library.py freeze --config config/esz5_weekly_library_development.json \
+  --dataset-dirs /tmp/esz5-age-500/prepared /tmp/esz5-age-1000/prepared \
+                 /tmp/esz5-age-2000/prepared --output-dir /tmp/esz5-library-plan
+python run_weekly_library.py build --plan /tmp/esz5-library-plan/plan.json \
+  --output-dir /tmp/esz5-library-result
+```
+
+输出 `library.json` 保存可序列化 Ridge/树参数、训练行/日期、版本可用时刻和
+源码/数据哈希，`report.md` 展示全部候选的预测诊断。路径必须尚不存在；运行不能
+覆盖参数。首次启动允许显式周中日期，此后每周第一个实际交易 session 开盘
+换版，只使用此前已结束且标签成熟的历史；UTC 文件日期与 trade date 分开。
+
+`src.weekly_library.predict_library(versions, frame, interval_ms)` 接收
+`PreparedDatasetReader` 的完整行情，输出 `N×K` 预测矩阵和逐行版本 ID。
+按当前可见时刻取版本，启动前或预热不足保持 NaN；JSON 树不使用 pickle。
+Ridge 使用全部合法样本，树用固定种子的最多 50,000 行均匀抽样，避免拼接全量
+季度训练矩阵。固定原 11 特征 Ridge 对照在启动后保持不更新。
+
+默认开发配置生成 10-01 首版和 10-06 周更新版；输入仅覆盖 09-29 至 10-03，
+因此 **10-06 只建库，没有该日预测评估**。原诊断日结束后可成为下一周训练历史，
+不再把它们称作未触碰测试。本入口尚未接入时间 IRL、执行器周界状态或论文
+选择器，预测误差不等于交易收益。结果与限制见
+[按周轻模型库验证记录](docs/weekly_library_validation_2026-10-02.md)。
 
 ## 数据与产物
 

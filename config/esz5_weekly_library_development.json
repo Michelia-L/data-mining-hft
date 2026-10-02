@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "purpose": "development_weekly_light_library",
+  "history_start_session": "2025-09-29",
+  "bootstrap_session": "2025-10-01",
+  "through_session": "2025-10-06",
+  "evaluation_sessions": ["2025-10-01", "2025-10-02", "2025-10-03"],
+  "history_session_counts": [1, 2],
+  "age_candidates_ms": [500, 1000, 2000],
+  "prediction_horizon_ms": 5000,
+  "purge_ms": 3645000,
+  "ridge_alpha": 1.0,
+  "tree_max_depth": 4,
+  "tree_min_samples_leaf": 50,
+  "tree_sample_limit": 50000,
+  "seed": 42,
+  "allow_partial": false,
+  "include_degraded": false,
+  "notes": "原文 §3.2 未公开窗口长度和完整特征公式。1/2 个完整历史 session 是小样本开发设定，不是论文周训练参数；首次 10-01 启动，此后每个 ISO 周第一个交易 session 开盘更新。10-06 仅验证建库，不进行无输入行情的预测。价格/盘口深度/价量交叉三组特征为显式工程近似，挂单深度不是成交量。树用固定种子的有界均匀优先级采样；Ridge 使用全部合法样本。所有日期已用于开发，不做 IRL 或收益选优。"
+}
