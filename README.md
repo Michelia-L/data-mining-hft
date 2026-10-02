@@ -234,6 +234,33 @@ python run_snapshot_audit.py compare --plan /tmp/esz5-age-plan/plan.json \
 真实数据结果及各原因解释见
 [快照年龄与长期标签对照](docs/snapshot_age_validation_2026-10-01.md)。
 
+### 校准时间尺度 OE 奖励并冻结后续评估
+
+`run_snapshot_irl.py` 将真实成交后成熟的七尺度 OE 向量接入有限策略 IRL。
+训练段拟合冻结 Ridge，校准段按净盈亏选专家、学习权重和选择策略；验证及测试
+只消费冻结选择。该入口补充上面的诊断基线，使用同一日期和执行协议；
+`run_session_experiment.py` 本身仍只运行等权诊断。
+
+```bash
+# 沿用缺格审计生成的三个 prepared 目录，全部候选必须齐备且来自同一批原始消息。
+python run_snapshot_irl.py freeze --config config/esz5_time_irl_development.json \
+  --dataset-dirs /tmp/esz5-age-500/prepared /tmp/esz5-age-1000/prepared \
+                 /tmp/esz5-age-2000/prepared --output-dir /tmp/esz5-time-irl-plan
+python run_snapshot_irl.py run --plan /tmp/esz5-time-irl-plan/plan.json \
+  --output-dir /tmp/esz5-time-irl-results
+```
+
+配置预先声明现金、Ridge 门槛乘数 1/2/4 和 simplex/signed_box 两种权约束。
+最大报价年龄 500ms 基线及 1000/2000ms 对照全部保留，不从收益选择年龄。
+运行不能覆盖参数，输出新目录的 JSON 和中文报告；源码或数据变化须重新冻结。
+这是 Algorithm 1 的有限策略近似，没有实现时间 ME IRL、按周模型库或 Algorithm 2/3。
+OE 均值仅覆盖全部尺度完整成熟的订单，零订单为未定义；现金零向量仅用于优化。
+静态成交不随权重变化，收益差异只能来自校准时冻结的策略选择。
+
+真实五 session 中，500ms 校准段仍无成熟 OE，明确阻止拟合；1000/2000ms
+对照能够求解，但专家和学习后的选择均为现金，没有正利润交易专家。详细结果、
+假设与验证见 [时间 OE IRL 验证记录](docs/time_irl_validation_2026-10-02.md)。
+
 ## 数据与产物
 
 - `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。

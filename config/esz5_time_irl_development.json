@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "purpose": "development_time_OE_IRL",
+  "session_protocol_file": "esz5_session_development.json",
+  "age_candidates_ms": [500, 1000, 2000],
+  "threshold_multipliers": [1, 2, 4],
+  "weight_constraints": ["simplex", "signed_box"],
+  "minimum_matured_orders": 1,
+  "solver_tolerance": 0.00000001,
+  "solver_max_iter": 50,
+  "tie_tolerance_usd": 0.000000001,
+  "tie_tolerance_reward": 0.000000001,
+  "notes": "有限策略为现金和固定 Ridge 的门槛乘数 1/2/4，按净利选校准专家。现金优先消歧且保留并列。最少 1 笔成熟订单仅保证可计算，不代表统计充分；权重和为 1 来自 Eq.(3)，非负及有符号盒边界是项目假设。验证/测试仅评估冻结选择，不选择报价年龄。"
+}
