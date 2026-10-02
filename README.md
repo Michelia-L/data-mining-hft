@@ -444,6 +444,42 @@ python run_learned_oe.py run --plan /tmp/esz5-learned-oe-plan/plan.json \
 三个年龄均未通过执行门控，仍不能声称取得可用 FMATO 实验结果。
 依据、数值与后续研究差异见 [OE 学习联动验证](docs/learned_oe_validation_2026-10-02.md)。
 
+### 真实多周 OE 就绪审计
+
+`run_multiweek_readiness.py` 检查真实周版本和长期校准覆盖，先回放校准段
+全部静态参照并学习三种权约束，再检查后段因果预测/质量。本入口不运行
+后段动态策略收益。就绪只表示可以继续在线开发验证，不表示正式复现完成。
+
+新增 `config/esz5_multiweek_*.json` 固定14个连续交易session：10-02/03
+启动训练，10-06至10-10校准，10-13至10-17及10-20/21检查后段预测。
+10-06/13/20三次周版各用最近1/2个已结束session，其他超参数沿用原值。
+所有检查日期均为开发用途；三种报价年龄完整保留，不按结果择窗或换专家。
+
+```bash
+# 先固定18个相邻UTC源分区，再运行全部年龄；输出目录必须新建。
+python run_snapshot_audit.py freeze --config config/esz5_multiweek_snapshot_audit.json \
+  --data-index data/ESZ5/index.json --output-dir /tmp/esz5-multiweek/data-plan
+for age in 500 1000 2000; do
+  python run_snapshot_audit.py run --plan /tmp/esz5-multiweek/data-plan/plan.json \
+    --max-age-ms "$age" --output-dir "/tmp/esz5-multiweek/age-$age"
+done
+python run_weekly_library.py freeze --config config/esz5_multiweek_weekly_library.json \
+  --dataset-dirs /tmp/esz5-multiweek/age-500/prepared /tmp/esz5-multiweek/age-1000/prepared \
+  /tmp/esz5-multiweek/age-2000/prepared --output-dir /tmp/esz5-multiweek/library-plan
+python run_weekly_library.py build --plan /tmp/esz5-multiweek/library-plan/plan.json \
+  --output-dir /tmp/esz5-multiweek/library
+python run_multiweek_readiness.py freeze --config config/esz5_multiweek_oe_readiness.json \
+  --library /tmp/esz5-multiweek/library/library.json --output-dir /tmp/esz5-multiweek/readiness-plan
+python run_multiweek_readiness.py run --plan /tmp/esz5-multiweek/readiness-plan/plan.json \
+  --output-dir /tmp/esz5-multiweek/readiness
+```
+
+输出JSON和中文报告包含每日校准前缀的成熟覆盖、三种拟合、专家/动作门控、
+独立重算的训练样本时序，以及每个真实session的版本、全部模型可预测量和
+长期标签原因。仅离线建好未来版本不能算作真实跨周覆盖；后段即使可预测
+也不补填策略收益。既有建库入口另输出离线预测诊断，不用于参数选优。
+完整依据和结果见 [真实多周就绪验证](docs/multiweek_readiness_validation_2026-10-02.md)。
+
 ## 数据与产物
 
 - `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。
