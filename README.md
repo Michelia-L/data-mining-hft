@@ -323,8 +323,43 @@ python run_library_oe.py run --plan /tmp/esz5-library-oe-plan/plan.json \
 缺尾未平仓使汇总净利未定义。这是工程边界协议，不是论文未公开细节的还原。
 静态候选不按奖励切换，线性权重重评不改变同一候选的成交/账本。
 完整样本、失败与限制见 [多模型时间 OE 验证](docs/library_oe_validation_2026-10-02.md)。
-当前真实窗口未跨周，跨周更新/归属已用合成 session 验证；尚无时间 ME IRL
-或论文固定期间 UCB/ARS，不能称为完整 FMATO。
+当前真实窗口未跨周，跨周更新/归属已用合成 session 验证；该入口本身没有
+在线 UCB/ARS。下面的独立入口新增期间 UCB 控制，仍不能称为完整 FMATO。
+
+### 固定期间 OE-UCB 与同期间轮换对照
+
+`run_period_ucb.py` 对应论文 Eq.(5)–(6)/Algorithm 2：以 session 开盘锚定
+5 分钟墙钟期间，首次有效决策选择一个模型，本期间逐 tick 使用该模型。
+`n(a)` 数实际选择期间，`N=sum(n)`；完整期间奖励用全部成交订单均值，
+`W(a)` 用已观察期间均值的运行平均，探索项严格使用 `ln(N)`。
+
+```bash
+# 先用当前源码另存重建上面的周库，再冻结期间实验；旧产物和结果保留。
+python run_period_ucb.py freeze --config config/esz5_period_ucb_development.json \
+  --library /tmp/esz5-current-library/library.json --output-dir /tmp/esz5-period-plan
+python run_period_ucb.py run --plan /tmp/esz5-period-plan/plan.json \
+  --output-dir /tmp/esz5-period-result
+```
+
+期间必须结束且其中全部订单的完整多尺度标签都成熟才反馈；缺格整桶不学习，
+无订单和末端未成熟均为未定义，不补零。访问数与反馈数分开；无反馈的初始
+`W=0` 是算法初始化，不能说成观测到零奖励。期间、持仓复核、预测前瞻与
+奖励前瞻分别配置。休市/缺格不压缩墙钟，不为跳过的期间伪造访问。
+
+本入口使用**预声明等权奖励控制**，因为当前多模型 IRL 尚无可用学习选择；
+不消费不可表示专家的诊断权重。5 分钟取论文例子，`C=1` 个价格点是项目
+设定；模型在期间内锁定、期间均值如何合并、无订单处理和延迟均为原文未
+公开的工程约定。没有宣称恢复完整生产算法或论文收益。
+
+保存所有年龄及 UCB/轮换/现金/原 Ridge/12 个固定模型的成本、成熟覆盖和
+负结果，共 16 个策略。动态决策仅在当下全部库预测可用时进行，不按未来
+标签删样本；静态候选按自身可用性回放。每天独立账户和统计，数值换版
+分开 `W/n`，旧奖励仍只更新旧版本；保留原持仓和成交归属，不因换模型强平。
+`--detail` 加订单/单笔到期审计，期间选择/反馈及版本统计默认保存。
+
+手算、未来扰动、合成跨周和真实结果见
+[固定期间 OE-UCB 验证](docs/period_ucb_validation_2026-10-02.md)。尚缺成功
+IRL 奖励联动、时间 ME IRL、历史窗口 ARS、真实跨周与全量长期评估。
 
 ## 数据与产物
 
