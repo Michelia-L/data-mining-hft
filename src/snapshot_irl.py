@@ -140,15 +140,24 @@ def best_with_ties(rows, values, tolerance):
     return dict(selected_policy_id=ties[0], tied_best_policy_ids=ties, best_score=float(best))
 
 
-def learn_calibration_reward(statistics, horizons, config, constraint):
+def learn_calibration_reward(statistics, horizons, config, constraint, *, expert_policy_ids=None):
     """只消费校准期 P×H 成熟订单特征，保留无数据、无信息和求解失败结果。
 
     专家先在所有已平仓候选中按净盈亏选择；若其奖励不可观测，不偷换成次优
     专家。现金是零向量约定；至少需要一个可观测非现金策略才允许拟合。
     求解收敛、专家可表示、正利润专家和权重唯一识别是不同概念。
+    expert_policy_ids 仅限制专家来源，不删减用于求解的候选矩阵。默认 None
+    保持旧的全候选规则；显式子集属于工程对照，并列仍按 statistics 的冻结
+    顺序消歧。先选净利专家，再检查成熟资格，不能从可观测子集倒选专家。
     """
+    if expert_policy_ids is not None:
+        names = [r['policy_id'] for r in statistics]
+        if (not expert_policy_ids or len(set(expert_policy_ids)) != len(expert_policy_ids)
+                or not set(expert_policy_ids).issubset(names)):
+            raise ValueError('Expert scope must be a nonempty unique subset of declared policies')
     settled = [r for r in statistics if r['pnl_aggregation_defined']]
-    expert = best_with_ties(settled, [r['net_pnl_usd'] for r in settled], config['tie_tolerance_usd'])
+    expert_rows = [r for r in settled if expert_policy_ids is None or r['policy_id'] in expert_policy_ids]
+    expert = best_with_ties(expert_rows, [r['net_pnl_usd'] for r in expert_rows], config['tie_tolerance_usd'])
     eligible, excluded = [], []
     for row in statistics:
         reason = ('unsettled_account' if not row['pnl_aggregation_defined'] else

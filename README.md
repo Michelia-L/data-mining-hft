@@ -480,6 +480,25 @@ python run_multiweek_readiness.py run --plan /tmp/esz5-multiweek/readiness-plan/
 也不补填策略收益。既有建库入口另输出离线预测诊断，不用于参数选优。
 完整依据和结果见 [真实多周就绪验证](docs/multiweek_readiness_validation_2026-10-02.md)。
 
+### OE 专家来源校准对照
+
+`run_expert_scope.py` 在相同校准账本与完整奖励比较集合上，对照“全候选选
+专家”和“仅库内选专家”。后者是明确的工程假设；最佳库策略即使亏损或
+无成熟奖励也先选取，再检查资格，不偷偷换成可观测次优者。
+
+```bash
+python run_expert_scope.py freeze --config config/esz5_expert_scope_comparison.json \
+  --input /tmp/esz5-multiweek/readiness/result.json --output-dir /tmp/esz5-expert-scope/frozen
+python run_expert_scope.py run --plan /tmp/esz5-expert-scope/frozen/plan.json \
+  --output-dir /tmp/esz5-expert-scope/evaluation
+```
+
+本轮真实校准结果：1000ms库内专家在三个约束下均通过门控，2000ms仅在
+signed_box/sum_only下通过；500ms专家仍无成熟OE。两位可用专家均为负净利，
+且1000ms仅4个成熟订单。全候选旧控制完全复现；所有权重仍未激活，没有
+新增动态收益或正式测试结论。依据、完整负结果和产物身份见
+[专家来源对照验证](docs/expert_scope_validation_2026-10-02.md)。
+
 ## 数据与产物
 
 - `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。
