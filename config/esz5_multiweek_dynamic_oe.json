@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "purpose": "development_multiweek_dynamic_OE",
+  "ars_protocol_file": "esz5_multiweek_history_ars.json",
+  "expert_scopes": ["all_candidates", "online_library"],
+  "active_constraint": "sum_only",
+  "minimum_evaluation_weekly_versions": 2,
+  "notes": "两种工程专家来源使用同一完整候选矩阵，校准全部重放后冻结奖励；只激活仅等式学习且通过原专家/完整模型库门控的组。18个原控制与6个学习策略状态、全部三个年龄均保留。10-13至10-21后段首次在本协议计算动态收益，仍属已使用开发日期；权重不跨周重学，不追求或按盈利筛选配置。"
+}
