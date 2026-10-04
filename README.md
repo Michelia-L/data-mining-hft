@@ -1,5 +1,10 @@
 # data-mining-hft
 
+报告收尾入口：[中文复现报告初稿](final_replication_report.md)、
+[现有多周证据快照](results/final_report/development_snapshot.json)及
+[最多四个PR的交付范围](docs/final_delivery_plan_2026-10-04.md)。后续工作只补
+报告必需的对照、冻结评价和定稿；已知限制与负结果进入报告，不单独扩展框架。
+
 FMATO 思路的课程工程实验，参考 [原论文](1679894.pdf)。**尚未复现原论文完整算法或实验数值。** 默认入口实现事件级 UCB、连续影子账户 ARS、有限策略奖励学习及美元记账；另有定时快照、时间 OE 校准和按周轻模型库的独立入口。方法对照见 [论文定义与 20 项审阅处理](docs/paper_alignment.md)。
 
 **旧版回测包含前视偏差，其收益与延迟结论已撤回。** 当前版本清除跨切分标签，奖励成熟后才更新选择器，按下一事件行情成交，逐事件盯市并在期末平仓。论文未公开的策略优化器使用明确标注的有限策略近似；不宣称等价复刻原生产系统。
@@ -541,7 +546,7 @@ python run_multiweek_dynamic_oe.py run \
 - `databento_glbx.mdp3_mbp_10.parquet`：CME ES 合约订单簿事件。
 - `databento_ifeu.impact_mbp_10.parquet`：ICE Brent 合约订单簿事件。
 - [实验结果](results/experiment_summary.json)：切分时间、调参轨迹、模型诊断、策略指标、奖励消融及资金曲线。
-- [复现报告](replication_report.md)：从同一结果文件自动生成，注明实现与论文差异。
+- [历史事件级实验报告](replication_report.md)：从旧入口结果自动生成；真实多周证据及收尾正文见上方报告入口。
 - [离线看板](visualization_dashboard.html)：单文件，无 CDN 依赖，可切换品种和窗口。
 - [复现瓶颈评估](docs/bottleneck_assessment_2026-09-30.md)：论文、旧结果和新增数据的对照，注明评估基线与后续进度。
 
