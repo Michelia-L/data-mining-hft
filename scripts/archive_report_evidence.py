@@ -62,6 +62,8 @@ def archive(result, source_sha256, source_commit):
         source_result_sha256=source_sha256, source_commit=source_commit, plan_sha256=result['plan_sha256'],
         source_code_sha256=plan['code_sha256'], environment=result['environment'], instrument=result['instrument'],
         formal_replication_ready=result['formal_replication_ready'], holdout_claim=plan['holdout_claim'],
+        stage_roles=plan['stage_roles'], reward_update_policy=plan['reward_update_policy'],
+        account_policy=plan['account_policy'], activation_policy=plan['activation_policy'],
         selected_age_ms=result['selected_age_ms'], selected_expert_scope=result['selected_expert_scope'],
         strategies=plan['strategies'], configuration=dict(dynamic=plan['config'], ars=ars['config'],
             period=period['config'], session=binding['protocol'], library=period['library_configuration']),
