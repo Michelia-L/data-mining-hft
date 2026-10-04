@@ -499,6 +499,42 @@ signed_box/sum_only下通过；500ms专家仍无成熟OE。两位可用专家均
 新增动态收益或正式测试结论。依据、完整负结果和产物身份见
 [专家来源对照验证](docs/expert_scope_validation_2026-10-02.md)。
 
+### 真实多周 OE 动态对照
+
+`run_multiweek_dynamic_oe.py` 将上述两种专家来源接入真实时间 UCB/双 ARS。
+重新回放五个校准日后冻结两组权重，再评价 10-13 至 10-17、10-20/21；
+沿用已有 14 个开发 session 和三种报价年龄，不声明新的未触碰测试集。
+
+```bash
+python run_multiweek_dynamic_oe.py freeze \
+  --config config/esz5_multiweek_dynamic_oe.json \
+  --library /tmp/esz5-multiweek/library/library.json \
+  --output-dir /tmp/esz5-multiweek-dynamic/frozen
+python run_multiweek_dynamic_oe.py run \
+  --plan /tmp/esz5-multiweek-dynamic/frozen/plan.json \
+  --checkpoint-dir /tmp/esz5-multiweek-dynamic/checkpoints \
+  --output-dir /tmp/esz5-multiweek-dynamic/evaluation
+```
+
+模型库由前述多周准备/建库命令生成，必须通过当前加载与数据身份检查。
+旧就绪协议的后段角色是预测检查；本入口在新冻结计划中显式扩为动态交易。
+全候选仍用 `Learned-OE-*` 名称，库内专家组使用 `LibraryExpert-OE-*`；原18个
+等权/轮换/静态控制完整保留，共24项状态。三种权约束均作校准诊断，只激活
+预声明的 `sum_only` 且通过原门控的组，阻断组无成交/收益观察，不填现金0。
+
+每个session重启账户、选择器和反馈队列；模型按周因果更新，奖励不重学。
+结果同时保存全部日账本、完整期间/历史窗口覆盖、实际选择版本与训练时序审计。
+`--checkpoint-dir` 按完整校准日和评价日原子保存结果；中断后用同一命令恢复。
+计划、明细开关、依赖环境和内容哈希必须相同，恢复后重新核对预测与动态审计。
+输出目录尚未发布时可恢复；已有最终输出目录仍禁止覆盖。检查点不是最终结果。
+报告由同一JSON生成，另存新目录，不覆盖旧产物。完整结果与限制见
+[真实多周动态验证](docs/multiweek_dynamic_oe_validation_2026-10-03.md)。
+
+真实回放已完成：36个完整日检查点、504项评价日策略状态，其中420项执行、
+84项阻断。1000/2000ms库内学习组均实际覆盖10-13与10-20两个评价周；
+七日累计净利全部为负，严格最近ARS无可评分历史窗。完整结果恢复逐字段
+一致。这证明本轮协议能够执行与核查，尚不支持收益改善或正式复现结论。
+
 ## 数据与产物
 
 - `data/` 目录中的新增 ESZ5 数据可从 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE) 获取；本地按 `data/ESZ5/` 结构存放，供上述按日期实验入口使用。
