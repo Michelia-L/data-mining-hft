@@ -5,7 +5,29 @@
 [最多四个PR的交付范围](docs/final_delivery_plan_2026-10-04.md)。后续工作只补
 报告必需的对照、冻结评价和定稿；已知限制与负结果进入报告，不单独扩展框架。
 
-FMATO 思路的课程工程实验，参考 [原论文](1679894.pdf)。**尚未复现原论文完整算法或实验数值。** 默认入口实现事件级 UCB、连续影子账户 ARS、有限策略奖励学习及美元记账；另有定时快照、时间 OE 校准和按周轻模型库的独立入口。方法对照见 [论文定义与 20 项审阅处理](docs/paper_alignment.md)。
+收尾2/4入口为`run_four_combinations.py`：在既有14个开发session上补真实
+时间ME与均值集成，继承同执行依赖的24项OE/静态参照。ME采用过既有阈值
+预测的有方向价格差，完整期间全部信号成熟后才反馈；这是论文未公开细节的
+工程假设，未恢复极端千分位筛选。四组合、三年龄、两种专家来源和双ARS
+均保留执行或阻断状态，不把失败当现金0。见
+[四组合验证](docs/four_combinations_validation_2026-10-04.md)。
+
+```bash
+# 需要原PR #19完整结果、该结果绑定的prepared数据及周模型库；快照不能替代明细。
+# 原执行/训练源码和环境必须一致；新增ME另冻计划、另存结果，不覆盖旧证据。
+python run_four_combinations.py freeze \
+  --config config/esz5_four_combinations_development.json \
+  --oe-result /tmp/data-mining-multiweek-dynamic-oe-resumable/evaluation/result.json \
+  --output-dir /tmp/fmato-four-frozen
+python run_four_combinations.py run --plan /tmp/fmato-four-frozen/plan.json \
+  --checkpoint-dir /tmp/fmato-four-checkpoints --output-dir /tmp/fmato-four-evaluation
+```
+
+新输出包含完整`result.json`、同源`report.md`和紧凑`evidence.json`；完整日
+检查点可恢复。上述路径是示例且须另选未存在目录。全部日期已用于开发，
+本入口不是下一收尾的冻结后段复核，不声称未触碰测试或论文长期实验。
+
+FMATO 思路的课程工程实验，参考 [原论文](1679894.pdf)。**尚未复现原论文完整算法或实验数值。** 默认入口实现事件级 UCB、连续影子账户 ARS、有限策略奖励学习及美元记账；另有定时快照、真实时间 ME/OE 校准与选择、按周轻模型库的独立入口。方法对照见 [论文定义与 20 项审阅处理](docs/paper_alignment.md)。
 
 **旧版回测包含前视偏差，其收益与延迟结论已撤回。** 当前版本清除跨切分标签，奖励成熟后才更新选择器，按下一事件行情成交，逐事件盯市并在期末平仓。论文未公开的策略优化器使用明确标注的有限策略近似；不宣称等价复刻原生产系统。
 
