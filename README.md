@@ -27,6 +27,30 @@ python run_four_combinations.py run --plan /tmp/fmato-four-frozen/plan.json \
 检查点可恢复。上述路径是示例且须另选未存在目录。全部日期已用于开发，
 本入口不是下一收尾的冻结后段复核，不声称未触碰测试或论文长期实验。
 
+收尾3/4入口为`run_frozen_ablation.py`。日期先声明为2025-10-22/23/24/27/28/29/30，
+旧校准奖励与失败门控逐值继承，后周仅用已结束23/24日训练；三年龄、两来源、
+双ARS与现金/固定首候选/均值集成共27项状态均保留。单尺度赋权仍等待七尺度
+共同成熟，以隔离权重贡献；不声称等价论文E(10tick)基线。数据准备及原文依据见
+[冻结复核记录](docs/frozen_ablation_validation_2026-10-05.md)。
+
+```bash
+# 需要PR #21完整结果和新后段的三个prepared目录；收益运行前冻结，不重学旧奖励。
+python run_frozen_ablation.py freeze \
+  --config config/esz5_final_frozen_ablation.json \
+  --prior-evidence results/final_report/four_combinations_snapshot.json \
+  --prior-result /tmp/fmato-final-four/evaluation/result.json \
+  --dataset-dirs /tmp/fmato-final-ablation/age-500/prepared \
+                 /tmp/fmato-final-ablation/age-1000/prepared \
+                 /tmp/fmato-final-ablation/age-2000/prepared \
+  --output-dir /tmp/fmato-ablation-frozen
+python run_frozen_ablation.py run --plan /tmp/fmato-ablation-frozen/plan.json \
+  --checkpoint-dir /tmp/fmato-ablation-checkpoints --output-dir /tmp/fmato-ablation-results
+```
+
+输出包含全部策略的`result.json`/`report.md`、27项逐日热图及预声明UCB消融
+累计图；累计是独立日净利加总。完整期间账本在日检查点，摘要保留其SHA，
+恢复会重做预测/时序/权重/费用审计，不重训或重新交易。新目录保护旧产物。
+
 FMATO 思路的课程工程实验，参考 [原论文](1679894.pdf)。**尚未复现原论文完整算法或实验数值。** 默认入口实现事件级 UCB、连续影子账户 ARS、有限策略奖励学习及美元记账；另有定时快照、真实时间 ME/OE 校准与选择、按周轻模型库的独立入口。方法对照见 [论文定义与 20 项审阅处理](docs/paper_alignment.md)。
 
 **旧版回测包含前视偏差，其收益与延迟结论已撤回。** 当前版本清除跨切分标签，奖励成熟后才更新选择器，按下一事件行情成交，逐事件盯市并在期末平仓。论文未公开的策略优化器使用明确标注的有限策略近似；不宣称等价复刻原生产系统。

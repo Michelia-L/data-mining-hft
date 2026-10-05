@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen_followup_reward_ablation",
+  "evaluation_sessions": ["2025-10-22", "2025-10-23", "2025-10-24", "2025-10-27", "2025-10-28", "2025-10-29", "2025-10-30"],
+  "initial_version_session": "2025-10-20",
+  "weekly_updates": ["2025-10-27"],
+  "training_sessions": {"2025-10-20": ["2025-10-16", "2025-10-17"], "2025-10-27": ["2025-10-23", "2025-10-24"]},
+  "age_candidates_ms": [500, 1000, 2000],
+  "reward_types": ["ME", "OE"],
+  "reward_controls": ["equal", "single_shortest"],
+  "expert_scopes": ["all_candidates", "online_library"],
+  "selectors": ["UCB", "ARS-recent", "ARS-matured"],
+  "maturity_policy": "all_seven_scales_even_when_weight_is_zero",
+  "reward_update_policy": "inherit_previous_calibration_never_refit",
+  "holdout_claim": "frozen_recheck_no_untouched_claim",
+  "quality_policy": "reject_partial_degraded_missing_source_or_no_quotes_keep_internal_gaps",
+  "notes": "收尾3/4在读取该段策略收益前固定：取旧末日后首七个交易session，与旧七日长度一致且含两周版本，不按收益选日期/年龄/专家/窗口。仅沿用ESZ5及全部既有参数；后周仅用已结束23/24日训练，冻结旧校准奖励。最短尺度赋权是[1,0,0,0,0,0,0]，仍等七尺度成熟，隔离权重与反馈时延影响；这是项目消融，不等价论文E(10tick)单独成熟基线。保留两奖励、两来源、双ARS及现金/预声明首候选/均值集成共27项，不扩展固定候选全榜。"
+}
