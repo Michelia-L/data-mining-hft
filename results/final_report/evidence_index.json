@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "delivery_status": "partial_replication_final",
+  "report": "final_replication_report.md",
+  "purpose": "固定归档文件身份及论文部分复现的交付索引，不重新训练、选择日期或参数",
+  "experiments": [
+    {
+      "id": "oe_development",
+      "path": "results/final_report/development_snapshot.json",
+      "sha256": "8dd3caffea6da0b400dd2a42ee89151d9649af8345bf3ef8ec9b8ec2a7ea190f",
+      "evidence_kind": "fmato_report_development_snapshot",
+      "source_result_sha256": "d9aa5e4b416d4d9d28cc05ec22bdeed6a608c80e50f6a6119931c82c57b7e5ae",
+      "source_commit": "115bc8d6b3e15899dbb8a75e6c99783a2baed08e",
+      "plan_sha256": "bb2145612fece2e08249399207862f727d12fd81cda202589567bd07274b0639",
+      "strategy_count": 24,
+      "evaluation_sessions": [
+        "2025-10-13",
+        "2025-10-14",
+        "2025-10-15",
+        "2025-10-16",
+        "2025-10-17",
+        "2025-10-20",
+        "2025-10-21"
+      ],
+      "strategy_day_statuses": {
+        "executed": 420,
+        "blocked": 84
+      },
+      "role": "开发证据；四组合的旧24项继承原OE，不重复当作新回放",
+      "full_ledger_in_archive": false
+    },
+    {
+      "id": "four_combinations",
+      "path": "results/final_report/four_combinations_snapshot.json",
+      "sha256": "0bc4a073b191573ee55b9f359ed8480429ca38c0ca54cd8a742beb0b1e5d869a",
+      "evidence_kind": "fmato_four_combinations_snapshot",
+      "source_result_sha256": "f709eaf9667335855ce1399604495941bd4ea204706ce2ec451db64e9479b815",
+      "source_commit": "acc7e856f763cf0fa9cf887ab58a52976a2875d9",
+      "plan_sha256": "93533ccdcd8a1eaf07ea98a36e6687104051c344da7d871eaeaa9c62a558bfaa",
+      "strategy_count": 34,
+      "evaluation_sessions": [
+        "2025-10-13",
+        "2025-10-14",
+        "2025-10-15",
+        "2025-10-16",
+        "2025-10-17",
+        "2025-10-20",
+        "2025-10-21"
+      ],
+      "strategy_day_statuses": {
+        "executed": 546,
+        "blocked": 168
+      },
+      "role": "开发证据；四组合的旧24项继承原OE，不重复当作新回放",
+      "full_ledger_in_archive": false
+    },
+    {
+      "id": "frozen_ablation",
+      "path": "results/final_report/frozen_ablation_snapshot.json",
+      "sha256": "3765d39e51748a72147e86653d0ca0edfcaf50d3e452a262962bc56fdc1e85b6",
+      "evidence_kind": "fmato_frozen_ablation_snapshot",
+      "source_result_sha256": "c2afc09be43d0282a27fc53b79e18cd680f78ecd0e63cb230e2ad07779a0b524",
+      "source_commit": "c406441c504cf8612822ed2b0bbb0242b63f2b46",
+      "plan_sha256": "5b3c9b8eaae508462edc7e620572e797895e4cf0a1298722f36bccc475919f7f",
+      "strategy_count": 27,
+      "evaluation_sessions": [
+        "2025-10-22",
+        "2025-10-23",
+        "2025-10-24",
+        "2025-10-27",
+        "2025-10-28",
+        "2025-10-29",
+        "2025-10-30"
+      ],
+      "strategy_day_statuses": {
+        "executed": 399,
+        "blocked": 168
+      },
+      "role": "七日冻结复核与最小赋权消融，无未触碰声明",
+      "full_ledger_in_archive": false
+    }
+  ],
+  "figures": [
+    {
+      "path": "results/final_report/figures/daily_net_usd.png",
+      "sha256": "176f9d925c9e9603f43698a370de7cfbd832b3291b42f52c8f88da995083407e",
+      "source_result_sha256": "c2afc09be43d0282a27fc53b79e18cd680f78ecd0e63cb230e2ad07779a0b524",
+      "description": "全部27项逐日独立账户美元净利；灰格为阻断/未定义",
+      "export_style": {
+        "legend.loc": "center left"
+      }
+    },
+    {
+      "path": "results/final_report/figures/cumulative_daily_net_usd.png",
+      "sha256": "a6eb4778466fdfec88e15f66bbe432de5a712d3fa4763557b1afde0c9278f2d7",
+      "source_result_sha256": "c2afc09be43d0282a27fc53b79e18cd680f78ecd0e63cb230e2ad07779a0b524",
+      "description": "预声明UCB赋权与必要参照的独立日净利累计，不是复利账户",
+      "export_style": {
+        "legend.loc": "center left"
+      }
+    }
+  ],
+  "delivery_documents": [
+    "README.md",
+    "final_replication_report.md",
+    "docs/final_delivery_plan_2026-10-04.md",
+    "docs/final_delivery_validation_2026-10-05.md",
+    "docs/paper_alignment.md",
+    "docs/frozen_ablation_validation_2026-10-05.md",
+    "results/final_report/README.md"
+  ],
+  "limits": [
+    "哈希和摘要一致不证明原始消息真实性、逐笔因果性或统计显著性",
+    "完整行情、prepared数据、周模型库及期间/历史窗口账本没有复制进交付快照",
+    "图像哈希只核对归档身份；不承诺不同Matplotlib/字体环境可生成相同PNG字节",
+    "中国期货实盘、原收益数值、生产优化器、完整ME筛选和原基线/链路耗时未复现"
+  ]
+}

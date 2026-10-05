@@ -1,9 +1,19 @@
 # data-mining-hft
 
-报告收尾入口：[中文复现报告初稿](final_replication_report.md)、
-[现有多周证据快照](results/final_report/development_snapshot.json)及
-[最多四个PR的交付范围](docs/final_delivery_plan_2026-10-04.md)。后续工作只补
-报告必需的对照、冻结评价和定稿；已知限制与负结果进入报告，不单独扩展框架。
+最终交付：[中文FMATO部分复现报告](final_replication_report.md)、
+[证据与复核索引](results/final_report/README.md)、
+[最终验证记录](docs/final_delivery_validation_2026-10-05.md)。四轮收尾已完成。
+原开发与冻结复核保留全部失败和负结果，学习奖励未显示稳定改善；完整论文
+生产系统、原市场长期/实盘结果仍未复现。
+
+```bash
+# 仅需Python标准库，无需行情或数值环境；只读核对三份证据、表格、图和本地链接。
+python scripts/verify_final_delivery.py
+```
+
+以下实验入口用于复核已有研究，完整重跑需要对应行情、prepared数据、周库
+和旧完整结果。默认`run_experiments.py`仍为事件级小窗口，不能产生本报告
+真实时间多周结果；新输出须用未存在目录以保留正式产物。
 
 收尾2/4入口为`run_four_combinations.py`：在既有14个开发session上补真实
 时间ME与均值集成，继承同执行依赖的24项OE/静态参照。ME采用过既有阈值

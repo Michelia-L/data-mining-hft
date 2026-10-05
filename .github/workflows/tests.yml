@@ -13,6 +13,9 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+      # 最终交付只读检查仅用标准库；先发现报告/归档/图表引用或数值错位。
+      # CI浅克隆不要求历史数值Git对象，额外源码对象核对由完整克隆执行。
+      - run: python scripts/verify_final_delivery.py
       # CI 检查声明的兼容依赖；复核随仓库数值时可使用 environment-snapshot.txt（环境快照）。
       - run: python -m pip install -r requirements.txt
       # 单元与合成数据端到端测试：验证因果性、资金守恒、奖励匹配和可重复性。
