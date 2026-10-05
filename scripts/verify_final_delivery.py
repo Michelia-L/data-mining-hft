@@ -17,6 +17,24 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 AGES = [500, 1000, 2000]
 GROUPS = ['equal', 'single_shortest', 'online_library']
+# 这是已审阅交付的必检范围，独立于可编辑索引。若只遍历索引，删除条目
+# 就会减少检查次数却继续报告成功；固定ID与路径，不以索引自身决定范围。
+EXPERIMENT_PATHS = {
+    'oe_development': 'results/final_report/development_snapshot.json',
+    'four_combinations': 'results/final_report/four_combinations_snapshot.json',
+    'frozen_ablation': 'results/final_report/frozen_ablation_snapshot.json',
+}
+FIGURE_PATHS = {
+    'results/final_report/figures/daily_net_usd.png',
+    'results/final_report/figures/cumulative_daily_net_usd.png',
+}
+REQUIRED_DELIVERY_DOCUMENTS = {
+    'README.md', 'final_replication_report.md',
+    'docs/final_delivery_plan_2026-10-04.md',
+    'docs/final_delivery_validation_2026-10-05.md',
+    'docs/paper_alignment.md', 'docs/frozen_ablation_validation_2026-10-05.md',
+    'results/final_report/README.md',
+}
 
 
 def require(condition, message):
@@ -81,6 +99,67 @@ def strategy_rows(text, names, totals, blocked_label):
                else money(case[name]['net_pnl_usd']) for case in totals] for name in names])
 
 
+def audit_index(index):
+    """先锁定必检清单，再读取证据，拒绝删除、重复或偷换检查项。
+
+    三批实验与两图采用精确集合，ID和文件路径必须一一对应。文档允许新增，
+    但原七份必要文档必须全部存在且无重复。索引是身份记录，不能同时充当
+    “哪些文件可以不检查”的授权；主报告也不能被换成另一个可编辑文档。
+    """
+    require(index['report'] == 'final_replication_report.md', '主报告路径改变')
+    experiments = index['experiments']
+    require(Counter(item['id'] for item in experiments) == Counter(EXPERIMENT_PATHS.keys())
+            and {item['id']: item['path'] for item in experiments} == EXPERIMENT_PATHS,
+            '实验检查清单缺项、重复或ID/路径改变')
+    require(Counter(item['path'] for item in index['figures']) == Counter(FIGURE_PATHS),
+            '图像检查清单缺项、重复或路径改变')
+    documents = index['delivery_documents']
+    require(len(documents) == len(set(documents))
+            and REQUIRED_DELIVERY_DOCUMENTS <= set(documents),
+            '交付文档检查清单缺少必要文档或存在重复')
+
+
+def audit_inherited_days(old, four):
+    """逐日核对旧24项OE/静态参照，拒绝总额不变的跨日改写。
+
+    按年龄、阶段、session和原策略顺序对齐，金额/成交数/奖励及完整动态审计
+    都比较原JSON值，不先舍入或只取字段交集。两份紧凑快照有已知投影差异：
+    原OE独有terminal_position、holding_ms_mean、pnl_aggregation_defined；
+    四组合独有blocking_reasons、scored_history_windows。只排除这些已核实字段，
+    共有字段缺失、增加未知字段或更改周版本/反馈计数均失败。
+
+    日级校准身份从calibration_sha256显式对应oe_calibration_sha256；预测审计
+    保持一致。此核对约束证据继承，不重新证明Eq.(5)或逐笔成交因果性。
+    """
+    names = old['strategies']
+    require(four['plan']['strategies'][:len(names)] == names, '四组合原24项策略身份改变')
+    old_only = {'terminal_position', 'holding_ms_mean', 'pnl_aggregation_defined'}
+    four_only = {'blocking_reasons', 'scored_history_windows'}
+    for prior, case in zip(old['age_cases'], four['age_cases']):
+        require(prior['max_age_ms'] == case['max_age_ms'], '四组合继承报价年龄不符')
+        require(prior['phases'].keys() == case['phases'].keys(), '四组合继承阶段改变')
+        for phase, previous in prior['phases'].items():
+            current = case['phases'][phase]
+            require(previous['statistics'] == current['statistics'][:len(names)],
+                    '四组合改写了原24项统计')
+            require([d['session_id'] for d in previous['daily']]
+                    == [d['session_id'] for d in current['daily']], '四组合继承阶段日期改变')
+            for left, right in zip(previous['daily'], current['daily']):
+                context = f'{prior["max_age_ms"]}ms/{phase}/{left["session_id"]}'
+                require(left['prediction_audit'] == right['prediction_audit']
+                        and left['calibration_sha256'] == right['oe_calibration_sha256'],
+                        f'四组合原24项日级预测/校准审计改变：{context}')
+                for before, after in zip(left['results'], right['results'][:len(names)]):
+                    original = {k: v for k, v in before.items() if k not in old_only}
+                    inherited = {k: v for k, v in after.items() if k not in four_only}
+                    require(original == inherited,
+                            f'四组合改写了原24项逐日结果：{context}/{before["strategy"]}')
+                for name in names:
+                    require(name in left['dynamic_audits'] and name in right['dynamic_audits']
+                            and left['dynamic_audits'][name] == right['dynamic_audits'][name],
+                            f'四组合改写了原24项逐日审计：{context}/{name}')
+
+
 def audit_case(case, strategies, expected_days):
     """从七个独立日账户复算统计；不同阶段不重复计入同一评价。
 
@@ -137,6 +216,7 @@ def verify(root, source_commits=False):
     index = json.loads(inside(root, 'results/final_report/evidence_index.json').read_text())
     require(index['schema_version'] == 1 and index['delivery_status'] == 'partial_replication_final',
             '需要本项目最终交付索引')
+    audit_index(index)
     report = inside(root, index['report']).read_text()
     artifacts = {}
     audited = {}
@@ -177,11 +257,7 @@ def verify(root, source_commits=False):
     frozen = artifacts['frozen_ablation']
     require(frozen['plan']['prior_result']['sha256'] == four['source_result_sha256']
             and frozen['plan']['prior_plan_sha256'] == four['plan_sha256'], '后段没有继承旧结果身份')
-    for a, b in zip(old['age_cases'], four['age_cases']):
-        # 旧24项OE/静态参照是继承证据，不把它们冒称新增回放。
-        for phase in a['phases']:
-            require(a['phases'][phase]['statistics'] == b['phases'][phase]['statistics'][:24],
-                    '四组合改写了原24项统计')
+    audit_inherited_days(old, four)
     for prior, case in zip(four['age_cases'], frozen['age_cases']):
         for kind in ('ME', 'OE'):
             groups = prior['me_calibration']['scopes'] if kind == 'ME' else prior['oe_calibration']
