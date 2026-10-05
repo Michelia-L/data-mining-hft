@@ -39,9 +39,9 @@ python run_frozen_ablation.py freeze \
   --config config/esz5_final_frozen_ablation.json \
   --prior-evidence results/final_report/four_combinations_snapshot.json \
   --prior-result /tmp/fmato-final-four/evaluation/result.json \
-  --dataset-dirs /tmp/fmato-final-ablation/age-500/prepared \
-                 /tmp/fmato-final-ablation/age-1000/prepared \
-                 /tmp/fmato-final-ablation/age-2000/prepared \
+  --dataset-dirs /tmp/fmato-final-ablation/age-500/prepared-seven \
+                 /tmp/fmato-final-ablation/age-1000/prepared-seven \
+                 /tmp/fmato-final-ablation/age-2000/prepared-seven \
   --output-dir /tmp/fmato-ablation-frozen
 python run_frozen_ablation.py run --plan /tmp/fmato-ablation-frozen/plan.json \
   --checkpoint-dir /tmp/fmato-ablation-checkpoints --output-dir /tmp/fmato-ablation-results
