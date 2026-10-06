@@ -15,7 +15,7 @@
 
 ## 数据集
 
-项目只使用本地 `data/ESZ5/` 的行情。下面的日期、条数和质量状态来自 `data/ESZ5/index.json`：
+ESZ5 行情的下载入口为 [Hugging Face 数据集 badraldine/datamining_hft_SUFE](https://huggingface.co/datasets/badraldine/datamining_hft_SUFE)，本地按 `data/ESZ5/` 结构存放。下面的日期、条数和质量状态来自 `data/ESZ5/index.json`：
 
 | 项目 | 说明 |
 | --- | --- |
