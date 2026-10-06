@@ -1,51 +1,35 @@
-"""冻结完整交易 session 的四段协议，流式训练固定基线并审计长尺度标签。
+"""四段时间协议、逐日读取、冻结身份与独立日美元汇总。
 
-论文物理第 3 页 §3.1 以一天为完整优化周期，第 4 页 Eq.(2)–(4) 描述
-短/长期评价，第 7 页隔离历史训练与未来测试。本阶段固定 Ridge、门槛和
-等权价格差；校准/验证段只诊断，尚未接入 IRL、调参、按周模型库或选择器。
+物理第3页 §3.1、第4页 Eq.(2)–(4)及第7页时间隔离。所有日期仍属开发，
+不声称未触碰测试；源码变动后必须另存新计划，历史身份不能迁就当前目录。
 """
 from collections import Counter
 import hashlib
-import importlib.metadata
 import json
 from pathlib import Path
-import platform
 import tempfile
-
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
-from threadpoolctl import threadpool_limits
-
 from src.artifacts import pretty_json
-from src.config import BASE_DIR, INSTRUMENT_CONFIG, SEED
-from src.irl_reward import IRLRewardLearner
+from src.config import BASE_DIR
 from src.model_library import RidgeModel
-from src.model_selector import FlatSelector, SingleModelSelector
 from src.snapshot_backtest import FEATURE_COLUMNS, PreparedDatasetReader, training_samples
 from src.snapshot_dataset import DEFAULT_CALENDAR, SessionCalendar, sha256_file, utc_ns
-from src.time_execution import TimeExecutionEngine
-from src.timed_snapshots import SNAPSHOT_SCHEMA
-
 
 PHASES = ('train', 'calibration', 'validation', 'test')
-CODE_FILES = ('run_session_experiment.py', 'src/session_experiment.py', 'src/snapshot_backtest.py',
-              'src/snapshot_dataset.py', 'src/time_execution.py', 'src/execution_engine.py',
-              'src/irl_reward.py', 'src/model_library.py', 'src/model_selector.py',
-              'src/config.py', 'src/timed_snapshots.py', 'src/artifacts.py')
-
+CODE_FILES = ('run_project.py',) + tuple(sorted(str(p.relative_to(BASE_DIR))
+              for p in (BASE_DIR / 'src').glob('*.py')))
 
 def code_hashes():
     """冻结代码与数据一起绑定；修复代码后须另存新计划，不冒充原冻结实验。"""
     return {name: sha256_file(BASE_DIR / name) for name in CODE_FILES}
-
 
 def fingerprint(document):
     """规范化 JSON 内容哈希，检测冻结计划被无意编辑；这不是密码学签名。"""
     payload = {k: v for k, v in document.items() if k != 'plan_sha256'}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False,
                                      allow_nan=False, separators=(',', ':')).encode()).hexdigest()
-
 
 def validate_protocol(protocol, calendar, interval_ms):
     """四段必须包含连续、不重复、有序的完整 session，不能按收益跳过日期。
@@ -91,7 +75,6 @@ def validate_protocol(protocol, calendar, interval_ms):
         raise ValueError('Source-quality permissions must be explicit booleans')
     return flattened
 
-
 def freeze_protocol(protocol_path, directory, *, calendar_path=DEFAULT_CALENDAR):
     """绑定协议、源码、日历与 prepared 文件哈希，不计算测试收益或选择参数。
 
@@ -99,7 +82,7 @@ def freeze_protocol(protocol_path, directory, *, calendar_path=DEFAULT_CALENDAR)
     因原始分区存在就声称全网格完整。前缀/降级默认拒绝，显式允许也保留标记。
     """
     protocol_path = Path(protocol_path).resolve()
-    protocol = json.loads(protocol_path.read_text(encoding='utf-8'))
+    protocol = json.loads(protocol_path.read_text(encoding='utf-8'))['protocol']
     calendar = SessionCalendar(calendar_path)
     # 先验证控制项再读取来源，避免非布尔值被当成隐式授权。
     if any(type(protocol.get(k)) is not bool for k in ('allow_partial', 'include_degraded')):
@@ -132,12 +115,11 @@ def freeze_protocol(protocol_path, directory, *, calendar_path=DEFAULT_CALENDAR)
         prepared_split_boundaries=reader.report['split_boundaries'],
         partial_input=reader.report['partial_input'], degraded_input=reader.report['degraded_input'],
         code_sha256=code_hashes(),
-        stage_roles=dict(train='fit_scaler_and_frozen_Ridge', calibration='diagnostics_reserved_for_IRL',
-                         validation='diagnostics_no_parameter_selection', test='frozen_development_evaluation'),
+        stage_roles=dict(train='bootstrap_history', calibration='expert_and_frozen_reward',
+                         validation='development_no_retuning', test='frozen_development_evaluation'),
         holdout_claim='not_claimed_all_windows_are_development_validation')
     plan['plan_sha256'] = fingerprint(plan)
     return plan
-
 
 def read_day(reader, day):
     """按完整 (open,close] 调度，保留关闭边界快照作盯市/反馈，不在边界成交。"""
@@ -146,7 +128,6 @@ def read_day(reader, day):
     if len(frame) < 2 or not frame.session_id.eq(day).all():
         raise ValueError(f'Bad single-session quote coverage: {day}')
     return frame
-
 
 def audit_horizons(frame, calendar, horizons_ms):
     """按当前行情重算各尺度的有效量和缺口原因，不使用 prepared 旧切分标签。
@@ -181,7 +162,6 @@ def audit_horizons(frame, calendar, horizons_ms):
             invalid_reasons={k: int(v) for k, v in Counter(reason[~valid]).items()})
     return dict(session_id=sessions[0], observed_rows=len(frame), feature_valid_rows=int(available.sum()),
                 all_horizons_feature_valid_rows=int(joint.sum()), labels=labels)
-
 
 def fit_streaming_ridge(reader, days, prediction_horizon_ms, purge_ms):
     """两遍逐 session 训练，内存上界为一天，不拼接整个季度的训练矩阵。
@@ -233,7 +213,6 @@ def fit_streaming_ridge(reader, days, prediction_horizon_ms, purge_ms):
         scaler_mean=scaler.mean_.tolist(), scaler_scale=scaler.scale_.tolist())
     return scaler, model, metadata
 
-
 def summarize_days(days, strategy):
     """日账户独立固定资金；只有所有日都平仓才定义总净盈亏，避免抹掉缺尾风险。
 
@@ -251,120 +230,6 @@ def summarize_days(days, strategy):
         matured_order_count=sum(r['matured_order_count'] for r in rows),
         unmatured_fill_rewards_at_end=sum(r['unmatured_fill_rewards_at_end'] for r in rows),
         account_policy='independent_daily_accounts_no_compounding', sharpe_ratio=None)
-
-
-def run_frozen_protocol(plan_path, *, detail=False):
-    """运行已绑定的开发协议；不接受覆盖日期/门槛/奖励尺度等实验参数。
-
-    校准、验证、测试只消费冻结模型。改变非训练数据不应改变训练参数；改变冻结
-    文件、数据、日历或源码必须重新冻结并保留原产物，不能偷偷复用原实验身份。
-    """
-    plan_path = Path(plan_path).resolve()
-    plan = json.loads(plan_path.read_text(encoding='utf-8'))
-    if (plan.get('schema_version') != 1 or plan.get('plan_kind') != 'frozen_session_protocol'
-            or plan.get('plan_sha256') != fingerprint(plan)):
-        raise ValueError('Frozen plan integrity check failed')
-    if code_hashes() != plan['code_sha256']:
-        raise ValueError('Source changed after freezing; save a new plan')
-    calendar = SessionCalendar(plan['calendar']['path'])
-    if calendar.sha256 != plan['calendar']['sha256']:
-        raise ValueError('Calendar changed after freezing')
-    config = plan['protocol']
-    reader = PreparedDatasetReader(plan['dataset']['path'], calendar=calendar,
-        allow_partial=config['allow_partial'], include_degraded=config['include_degraded'])
-    validate_protocol(config, calendar, reader.report['interval_ms'])
-    if reader.provenance != plan['dataset'] or reader.report['interval_ms'] != plan['interval_ms']:
-        raise ValueError('Prepared data changed after freezing')
-    horizons = config['reward_horizons_ms']
-    with threadpool_limits(limits=1):
-        scaler, model, fitted = fit_streaming_ridge(reader, config['sessions']['train'],
-                                                   config['prediction_horizon_ms'], max(horizons))
-        audits, phases = [], {}
-        reward = IRLRewardLearner(horizons=horizons, definition='paper_price_difference')
-        engine = TimeExecutionEngine(reward, interval_ms=plan['interval_ms'], calendar=calendar,
-            latency_ms=config['latency_ms'], holding_review_ms=config['holding_review_ms'],
-            threshold=config['threshold'], force_replay_end=False)
-        for phase in PHASES:
-            daily = []
-            for day in config['sessions'][phase]:
-                frame = read_day(reader, day)
-                audit = audit_horizons(frame, calendar, horizons)
-                audit['phase'] = phase
-                audits.append(audit)
-                if phase == 'train':
-                    continue
-                valid = frame.feature_valid.to_numpy()
-                predictions = np.full((len(frame), 1), np.nan)
-                if valid.any():
-                    predictions[valid, 0] = model.predict(scaler.transform(frame.loc[valid, FEATURE_COLUMNS].to_numpy(float)))
-                quotes = frame[SNAPSHOT_SCHEMA.names + ['session_id', 'segment_id', 'mid_price', 'feature_valid']]
-                fixed = SingleModelSelector('Session-Baseline-Fixed-Ridge', [model])
-                fixed.reward_type = 'OE'
-                cash = FlatSelector('Session-Baseline-Cash', [model])
-                results = [engine.run_backtest(s, quotes, predictions, detail=detail) for s in (fixed, cash)]
-                daily.append(dict(session_id=day, scheduled=plan['schedules'][day],
-                    observed_first_time=str(frame.ts_event.iloc[0]), observed_last_time=str(frame.ts_event.iloc[-1]),
-                    results=results))
-            if phase != 'train':
-                phases[phase] = dict(role=plan['stage_roles'][phase], daily=daily,
-                    summary=[summarize_days(daily, name) for name in
-                             ('Session-Baseline-Fixed-Ridge', 'Session-Baseline-Cash')])
-    return dict(schema_version=1, result_kind='session_protocol_baselines', plan_sha256=plan['plan_sha256'],
-        frozen_plan_file_sha256=sha256_file(plan_path), plan=plan, seed=SEED,
-        model=fitted, training_purge_ms=max(horizons), feature_columns=FEATURE_COLUMNS,
-        label_policy='current_quotes_exact_target_same_session_and_continuous_block',
-        horizon_audits=audits, phases=phases, reward_definition='paper_price_difference',
-        reward_weights=reward.weights.tolist(), reward_weights_source='fixed_equal_no_IRL',
-        instrument=INSTRUMENT_CONFIG['CME_ES'], code_sha256=code_hashes(),
-        environment=dict(python=platform.python_version(), **{name: importlib.metadata.version(name)
-            for name in ('numpy', 'pandas', 'pyarrow', 'scikit-learn', 'scipy', 'threadpoolctl')}),
-        limits=['四段日期已冻结；校准/验证只诊断，尚未学习 IRL 或选择参数。',
-                '独立日账户；缺少退出报价时保留仓位，总盈亏未定义，不复利、不年化。',
-                '网格、延迟、门槛、风险退出和奖励尺度是工程设定，不是原文完整交易规则。',
-                '固定模型与现金，不是按周轻模型库或论文 Algorithm 2/3。',
-                '所有日期属于开发验证，不能声称为未触碰的正式样本外测试。'])
-
-
-def render_plan(plan):
-    """冻结时只展示协议与来源覆盖，不展示任何测试收益。"""
-    lines = ['# 冻结的 session 开发协议', '', f"计划哈希：`{plan['plan_sha256']}`", '',
-             '| 阶段 | trade date | 用途 |', '| --- | --- | --- |']
-    for phase in PHASES:
-        lines.append(f"| {phase} | {', '.join(plan['protocol']['sessions'][phase])} | {plan['stage_roles'][phase]} |")
-    lines += ['', '只记录开发验证用途；冻结不自动证明测试从未被观察。', '',
-        '## 参数', '', pretty_json(plan['protocol']), '', '## 完整源分区与网格覆盖', '',
-        pretty_json(plan['source_coverage']), '',
-        '原始 UTC 分区齐备与所有交易网格齐备是不同条件；缺格不会填充。']
-    return '\n'.join(lines) + '\n'
-
-
-def render_result(result):
-    """逐日成本、长尺度有效量与失效原因从同一份 JSON 生成，不挑选正收益日。"""
-    lines = ['# 跨 session 固定模型开发验证', '',
-        f"计划哈希：`{result['plan_sha256']}`；训练样本 {result['model']['training_rows']}；"
-        f"末端隔离 {result['training_purge_ms']} ms。", '',
-        '校准/验证仅诊断；权重固定等权。每个 session 独立日账户，按已知日历退出，关闭边界不成交。', '',
-        '| 阶段 | trade date | 基线 | 交易 | 毛利 USD | 成本 USD | 净利 USD | 成熟 OE | 未成熟 OE | 期末仓位 |',
-        '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |']
-    for phase, data in result['phases'].items():
-        for day in data['daily']:
-            for row in day['results']:
-                lines.append(f"| {phase} | {day['session_id']} | {row['strategy']} | {row['total_trades']} | "
-                    f"{row['gross_pnl_usd']:.4f} | {row['friction_usd']:.4f} | {row['net_pnl_usd']:.4f} | "
-                    f"{row['matured_order_count']} | {row['unmatured_fill_rewards_at_end']} | {row['terminal_position']} |")
-    for phase, data in result['phases'].items():
-        lines += ['', f'### {phase} 汇总', '', '```json', pretty_json(data['summary']), '```', '']
-    lines += ['## 各尺度特征与标签联合有效样本', '',
-        '| 阶段 | trade date | 行情 | 特征有效 | 前瞻 ms | 特征与标签有效 | 缺口/边界失效原因 |',
-        '| --- | --- | ---: | ---: | ---: | ---: | --- |']
-    for audit in result['horizon_audits']:
-        for horizon, values in audit['labels'].items():
-            lines.append(f"| {audit['phase']} | {audit['session_id']} | {audit['observed_rows']} | "
-                f"{audit['feature_valid_rows']} | {horizon} | {values['feature_and_label_valid_rows']} | "
-                f"{json.dumps(values['invalid_reasons'], ensure_ascii=False)} |")
-    lines += ['', '## 复现限制', ''] + ['- ' + note for note in result['limits']]
-    return '\n'.join(lines) + '\n'
-
 
 def publish_bundle(document, report, directory, json_name):
     """输出必须是新目录；原子发布计划或结果，不覆盖历史实验。"""

@@ -3,8 +3,12 @@
 *.Zone.Identifier
 *:Zone.Identifier
 *.csv
-# 多日原始行情在 Hugging Face 分发；本地 data/ 不加入 Git 提交。
+# 多日原始行情只保留本地，data/ 不加入 Git 提交。
 data/
+
+# PPT 和讲稿仅作本地参考，由组员自行制作展示材料。
+/presentation.md
+/presentation.pptx
 
 __pycache__/
 *.pyc

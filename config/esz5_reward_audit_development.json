@@ -1,8 +1,0 @@
-{
-  "schema_version": 1,
-  "purpose": "development_reward_representability_audit",
-  "constraints": ["simplex", "signed_box", "sum_only"],
-  "verification_tolerance": 1e-9,
-  "solver_feasibility_tolerance": 1e-9,
-  "notes": "Eq.(3) 只要求权重和为1，三种集合使用完全相同的原校准专家与候选。sum_only 可行见证以最小L1消歧，是诊断假设而非原文IRL目标；reward容差沿用归档协议。HiGHS与证书验证精度预声明，不根据后续收益选边界或改专家，不激活诊断权重。"
-}

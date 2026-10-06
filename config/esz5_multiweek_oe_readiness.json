@@ -1,7 +1,0 @@
-{
-  "schema_version": 1,
-  "purpose": "development_multiweek_OE_readiness",
-  "oe_protocol_file": "esz5_multiweek_library_oe.json",
-  "minimum_weekly_versions": 3,
-  "notes": "固定三次真实周版本、五session校准与后段预测检查；保留全部年龄和负结果。只审计可观测覆盖、专家/动作一致性与因果版本，不将就绪等同于论文完整算法或跨周资金链路。"
-}

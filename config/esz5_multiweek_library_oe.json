@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "purpose": "development_library_time_OE_IRL",
-  "session_protocol_file": "esz5_multiweek_session_development.json",
-  "irl_config_file": "esz5_multiweek_time_irl.json",
-  "model_update_policy": "predeclared_weekly_visible",
-  "session_boundary_policy": "independent_daily_accounts_no_feedback_carry",
-  "notes": "仅多周就绪审计：校准全16个静态参照，三个权重集合均保留。后段不计算交易收益；模型周参数按因果计划更新，校准权重不重学。"
-}

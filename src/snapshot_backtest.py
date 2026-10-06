@@ -1,37 +1,16 @@
-"""快照数据集到固定模型时间回放的独立小窗口实验。
-
-论文第 3–4 页 §3.1/§3.2 要求历史训练模型；第 7 页使用按时间分离的测试。
-这里固定 Ridge、训练段标准化、等权价格差奖励及现金基线，不进行测试选参，
-也不声称已实现按周模型库、IRL 校准或论文选择器。只物化显式请求的时间窗口。
-"""
-import importlib.metadata
+"""只读按 session 准备的数据，构造不越过训练边界的标签。"""
 import json
 from pathlib import Path
-import platform
-import tempfile
-
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from sklearn.preprocessing import StandardScaler
-from threadpoolctl import threadpool_limits
-
-from src.artifacts import pretty_json
-from src.config import BASE_DIR, INSTRUMENT_CONFIG, SEED
-from src.irl_reward import IRLRewardLearner
-from src.model_library import RidgeModel
-from src.model_selector import FlatSelector, SingleModelSelector
-from src.snapshot_dataset import (DEFAULT_CALENDAR, SessionCalendar, parse_boundary,
-                                  sha256_file, utc_ns, validate_batch)
+from src.snapshot_dataset import SessionCalendar, parse_boundary, sha256_file, utc_ns, validate_batch
 from src.timed_snapshots import SNAPSHOT_SCHEMA
-from src.time_execution import TimeExecutionEngine
 
-
-# 与数据准备模块的 11 个因果特征保持一致；不能允许质量 JSON 把未来列列为特征。
+# 特征均来自截至当前格的盘口；未来标签不得成为预测的可用性条件。
 FEATURE_COLUMNS = ['spread', 'rel_spread', 'obi_l1', 'obi_multi', 'micro_dev',
                    'ret_lag_1', 'ret_lag_5', 'ret_lag_10', 'ret_lag_30', 'vol_10', 'vol_30']
-
 
 def inspect_prepared_dataset(directory, calendar, allow_partial=False, include_degraded=False):
     """一次校验 prepared 元数据与文件哈希，供多 session 顺序读取复用。
@@ -102,7 +81,6 @@ def inspect_prepared_dataset(directory, calendar, allow_partial=False, include_d
     return file, report, dict(parquet_sha256=sha256_file(parquet_path),
                               quality_sha256=sha256_file(quality_path), path=str(directory))
 
-
 def read_prepared_quotes(file, report, calendar, start, end, batch_size=65536):
     """根据 Parquet 行组时间范围跳过无关 session，只物化请求的 [start,end)。
 
@@ -157,7 +135,6 @@ def read_prepared_quotes(file, report, calendar, start, end, batch_size=65536):
         raise ValueError('Prepared continuous blocks disagree with observed gaps')
     return frame
 
-
 class PreparedDatasetReader:
     """复用一次元数据/哈希检查的读取器，内存仅包含当前 session 的行情。
 
@@ -176,15 +153,6 @@ class PreparedDatasetReader:
         if [(p.stat().st_size, p.stat().st_mtime_ns) for p in self.paths] != self.identities:
             raise ValueError('Prepared files changed during experiment')
         return read_prepared_quotes(self.file, self.report, self.calendar, start, end, batch_size)
-
-
-def read_prepared_window(directory, start, end, *, calendar=None, allow_partial=False,
-                         include_degraded=False, batch_size=65536):
-    """兼容单窗口入口；多日协议使用 PreparedDatasetReader 避免重复扫描和哈希。"""
-    reader = PreparedDatasetReader(directory, calendar=calendar, allow_partial=allow_partial,
-                                   include_degraded=include_degraded)
-    return reader.read_window(start, end, batch_size), reader.report, reader.provenance
-
 
 def training_samples(frame, start, end, prediction_horizon_ms, purge_ms, *, minimum_samples=2):
     """只筛训练样本，并验证未来目标确实在训练段内；不改变回放序列。
@@ -230,120 +198,3 @@ def training_samples(frame, start, end, prediction_horizon_ms, purge_ms, *, mini
             or not np.array_equal(ends, times[audit] + horizon)):
         raise ValueError('Training labels disagree with observed target prices or times')
     return frame.loc[keep, FEATURE_COLUMNS].to_numpy(float), y, keep
-
-
-def run_snapshot_experiment(directory, *, train_start, train_end, test_start, test_end,
-                            calendar_path=DEFAULT_CALENDAR, prediction_horizon_ms=5000,
-                            latency_ms=500, holding_review_ms=15000, threshold=None,
-                            allow_partial=False, include_degraded=False, detail=False):
-    """冻结一个 Ridge 和现金基线，在用户明确的开发窗口上验证时间执行链路。
-
-    训练与测试按时间分离，不比较参数候选，不校准 IRL。该入口的测试窗口默认
-    记为开发验证用途，不能将多次观察过的窗口声称为未触碰的正式样本外测试。
-    """
-    bounds = [parse_boundary(v) for v in (train_start, train_end, test_start, test_end)]
-    a, b, c, d = bounds
-    if not a < b <= c < d:
-        raise ValueError('Require train_start < train_end <= test_start < test_end')
-    calendar = SessionCalendar(calendar_path)
-    frame, quality, provenance = read_prepared_window(directory, a, d, calendar=calendar,
-        allow_partial=allow_partial, include_degraded=include_degraded)
-    horizons = quality['horizons_ms']
-    if type(prediction_horizon_ms) is not int or prediction_horizon_ms not in horizons:
-        raise ValueError('Prediction horizon must be present in prepared dataset')
-    reward = IRLRewardLearner(horizons=horizons, definition='paper_price_difference')
-    engine = TimeExecutionEngine(reward, interval_ms=quality['interval_ms'], latency_ms=latency_ms,
-                                holding_review_ms=holding_review_ms, calendar=calendar, threshold=threshold)
-    X, y, training_mask = training_samples(frame, a, b, prediction_horizon_ms, max(horizons))
-    scaler, model = StandardScaler(), RidgeModel(alpha=1.)
-    test = frame.loc[(frame.ts_event >= c) & (frame.ts_event < d)].reset_index(drop=True)
-    if len(test) < 2 or not test.feature_valid.any():
-        raise ValueError('Test window needs quotes and causal feature-valid rows')
-    if test.instrument_id.iloc[0] != frame.loc[training_mask, 'instrument_id'].iloc[0]:
-        raise ValueError('Training and test contracts must match')
-    predictions = np.full((len(test), 1), np.nan)
-    valid = test.feature_valid.to_numpy()
-    with threadpool_limits(limits=1):
-        model.fit(scaler.fit_transform(X), y)
-        predictions[valid, 0] = model.predict(scaler.transform(test.loc[valid, FEATURE_COLUMNS].to_numpy(float)))
-    # 从回放输入中移除全部未来标签，强化代码层面的信息边界。
-    replay_columns = SNAPSHOT_SCHEMA.names + ['session_id', 'segment_id', 'mid_price', 'feature_valid']
-    replay = test[replay_columns]
-    fixed = SingleModelSelector('Time-Baseline-Fixed-Ridge', [model])
-    fixed.reward_type = 'OE'
-    cash = FlatSelector('Time-Baseline-Cash', [model])
-    results = [engine.run_backtest(selector, replay, predictions, detail=detail) for selector in (fixed, cash)]
-    return dict(schema_version=1, result_kind='snapshot_time_baseline', seed=SEED,
-        experiment_purpose='development_validation_not_untouched_holdout',
-        paper_basis='PDF pp.3–5 §3.1–3.3 Eq.(2)–(4); p.7 time-separated training/test',
-        split={name: stamp.isoformat() for name, stamp in zip(
-            ('train_start', 'train_end', 'test_start', 'test_end'), bounds)},
-        training_rows=int(training_mask.sum()), training_purge_ms=max(horizons),
-        training_label_policy='recomputed_from_current_window_quotes',
-        training_label_audit=dict(cached_valid_rows=int((training_mask &
-            frame[f'label_valid_{prediction_horizon_ms}ms'].to_numpy()).sum()),
-            recomputed_without_cached_valid_rows=int((training_mask &
-            ~frame[f'label_valid_{prediction_horizon_ms}ms'].to_numpy()).sum())),
-        training_first_time=str(frame.loc[training_mask, 'ts_event'].iloc[0]),
-        training_last_time=str(frame.loc[training_mask, 'ts_event'].iloc[-1]),
-        test_rows=len(test), test_feature_valid_rows=int(valid.sum()),
-        prediction_horizon_ms=prediction_horizon_ms, feature_columns=FEATURE_COLUMNS,
-        model=dict(name=model.name, alpha=1., coefficients=model.model.coef_.tolist(),
-                   intercept=float(model.model.intercept_), scaler_mean=scaler.mean_.tolist(),
-                   scaler_scale=scaler.scale_.tolist()),
-        execution=dict(instrument=INSTRUMENT_CONFIG['CME_ES'], threshold=engine.threshold,
-                       latency_ms=latency_ms, holding_review_ms=holding_review_ms,
-                       interval_ms=quality['interval_ms'], reward_weights=reward.weights.tolist(),
-                       reward_horizons_ms=horizons, reward_weights_source='fixed_equal_not_IRL'),
-        dataset=dict(**provenance, calendar_sha256=calendar.sha256,
-            partial_input=quality['partial_input'], degraded_input=quality['degraded_input'],
-            prepared_split_boundaries=quality['split_boundaries'],
-            source_inputs=quality['inputs'], quality_sessions=quality['sessions']),
-        code_sha256={name: sha256_file(BASE_DIR / name) for name in
-            ('run_snapshot_backtest.py', 'src/snapshot_backtest.py', 'src/time_execution.py',
-             'src/execution_engine.py', 'src/irl_reward.py', 'src/model_library.py', 'src/model_selector.py')},
-        environment=dict(python=platform.python_version(), **{name: importlib.metadata.version(name)
-            for name in ('numpy', 'pandas', 'pyarrow', 'scikit-learn', 'scipy', 'threadpoolctl')}),
-        limits=['固定模型与等权奖励；尚未接入 IRL 或论文 Algorithm 2/3。',
-                'CME ESZ5 与论文中国商品期货不同；本次收益不代表原论文数值复现。',
-                '只物化明确时间窗口；尚未支持全季度训练的外存算法。',
-                '风险退出与期末平仓采用报价模拟，无排队、冲击、保证金或实盘成交保证。'],
-        results=results)
-
-
-def render_report(result):
-    """输出本入口自己的中文报告，避免把新时间结构冒充旧事件实验 schema。"""
-    lines = ['# 快照时间回放开发验证', '',
-        '用途：开发链路验证；不是未触碰的正式测试，也不是论文完整 FMATO 实验。', '',
-        f"训练样本：{result['training_rows']}；训练末端隔离：{result['training_purge_ms']} ms。",
-        f"测试行情：{result['test_rows']}；特征有效：{result['test_feature_valid_rows']}。",
-        '训练样本与收益由当前窗口行情重算，旧 prepared 切分仅记录与审计。', '',
-        '| 基线 | 完整交易 | 成交 | 毛盈亏 USD | 成本 USD | 净盈亏 USD | 成熟 OE | 期末未成熟 OE |',
-        '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |']
-    for row in result['results']:
-        lines.append(f"| {row['strategy']} | {row['total_trades']} | {row['total_fills']} | "
-            f"{row['gross_pnl_usd']:.4f} | {row['friction_usd']:.4f} | {row['net_pnl_usd']:.4f} | "
-            f"{row['matured_order_count']} | {row['unmatured_fill_rewards_at_end']} |")
-        if not row['terminal_position_liquidated']:
-            lines += ['', f"{row['strategy']} 期末未能平仓，仓位={row['terminal_position']}；净盈亏含未实现盯市。"]
-    lines += ['', '## 切分与单位', '', pretty_json(result['split']), '',
-              pretty_json(result['execution']), '', '## 边界与反馈审计', '']
-    for row in result['results']:
-        lines += [row['strategy'], '', pretty_json({key: row[key] for key in
-            ('reward_status', 'risk_exits', 'cancelled_intents', 'unexecuted_intents_at_end')}), '']
-    lines += ['## 复现限制', ''] + ['- ' + note for note in result['limits']]
-    return '\n'.join(lines) + '\n'
-
-
-def write_results(result, directory):
-    """在新目录发布 JSON 和中文报告，不覆盖已有正式结果或失败后留下半份报告。"""
-    directory = Path(directory).resolve()
-    if directory.exists():
-        raise FileExistsError(f'Refusing to overwrite results: {directory}')
-    directory.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='.snapshot-backtest-', dir=directory.parent) as temporary:
-        staging = Path(temporary) / 'result'
-        staging.mkdir()
-        (staging / 'result.json').write_text(pretty_json(result) + '\n', encoding='utf-8')
-        (staging / 'report.md').write_text(render_report(result), encoding='utf-8')
-        staging.rename(directory)

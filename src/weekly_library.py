@@ -1,26 +1,26 @@
-"""论文 §3.2 的多特征/历史期轻模型库与按周可见版本。
+"""§3.2 / Table 2 的轻模型库：两类算法×三类特征×两个历史期，按周更新。
 
-物理第 3–4 页、Table 2 指定线性/决策树、价格/量/价量特征及每周更新，
-没有公开特征公式、模型数或窗口长度。此处将工程设定写入冻结计划，不把
-盘口挂单深度当成交量，不把预测诊断或建库完成当作完整 FMATO 收益复现。
+具体特征、短历史和12个候选均为工程设定；盘口挂单深度不等于成交量。
+各版本只能使用当时已结束历史，未来已离线生成的版本不能提前预测。
 """
 import hashlib
 import importlib.metadata
 import json
 from pathlib import Path
 import platform
-
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeRegressor
 from threadpoolctl import threadpool_limits
-
-from src.session_experiment import CODE_FILES, fingerprint, fit_streaming_ridge, read_day
+from src.session_experiment import code_hashes, fingerprint, fit_streaming_ridge, read_day
 from src.snapshot_backtest import FEATURE_COLUMNS, PreparedDatasetReader, training_samples
 from src.snapshot_dataset import DEFAULT_CALENDAR, SessionCalendar, sha256_file, utc_ns
 from src.timed_snapshots import SIZE_FIELDS
 
+def library_code_hashes():
+    """新模型绑定当前完整主线；不会更新旧快照的历史源码身份。"""
+    return code_hashes()
 
 # Table 2 的三类是原文依据；下列列名/公式/10 格窗口是项目明示的具体化。
 # 价格特征为相对收益/相对均价/相对方差；量的单位是前五档双边挂单合约数。
@@ -32,12 +32,6 @@ FEATURE_GROUPS = {
     'price_volume': ['price_diff_1_x_depth', 'price_diff_1_div_depth', 'micro_dev', 'rel_spread'],
 }
 ALL_LIBRARY_FEATURES = list(dict.fromkeys(c for cols in FEATURE_GROUPS.values() for c in cols))
-
-
-def library_code_hashes():
-    """冻结训练、标签、读者和新入口依赖；旧事件/IRL 实验入口不改写。"""
-    return {name: sha256_file(Path(__file__).resolve().parent.parent / name)
-            for name in (*CODE_FILES, 'src/weekly_library.py', 'run_weekly_library.py')}
 
 
 def library_features(frame, interval_ms):
@@ -70,7 +64,6 @@ def library_features(frame, interval_ms):
     output['price_diff_1_x_depth'] = difference * depth
     output['price_diff_1_div_depth'] = difference / depth
     return output
-
 
 def validate_library_config(config, calendar):
     """开发计划预声明窗口、启动例外、模型超参数和日期，不允许运行覆盖。"""
@@ -106,7 +99,6 @@ def validate_library_config(config, calendar):
     if config['tree_sample_limit'] < 2 or any(type(config[k]) is not bool for k in ('allow_partial', 'include_degraded')):
         raise ValueError('Need usable sample bound and explicit data permissions')
 
-
 def weekly_schedule(config, calendar):
     """首版允许显式日中周启动，后续只在每个 ISO 周首个交易 session 开盘换版。
 
@@ -130,11 +122,10 @@ def weekly_schedule(config, calendar):
             training_sessions={str(k): history[-k:] for k in config['history_session_counts']}))
     return schedule
 
-
 def freeze_library(config_path, directories, calendar_path=DEFAULT_CALENDAR):
-    """绑定全部年龄与来源；本阶段建库/预测诊断，不计算或选择交易收益。"""
+    """绑定全部年龄与来源；在交易评价之前冻结模型计划。"""
     config_path = Path(config_path).resolve()
-    config = json.loads(config_path.read_text(encoding='utf-8'))
+    config = json.loads(config_path.read_text(encoding='utf-8'))['library']
     calendar = SessionCalendar(calendar_path)
     validate_library_config(config, calendar)
     schedule = weekly_schedule(config, calendar)
@@ -178,7 +169,6 @@ def freeze_library(config_path, directories, calendar_path=DEFAULT_CALENDAR):
     plan['plan_sha256'] = fingerprint(plan)
     return plan
 
-
 def history_samples(reader, day, config):
     """精确重算 5 秒等预测标签，返回 N×19 特征、N 标签和 N 个样本时刻。
 
@@ -192,7 +182,6 @@ def history_samples(reader, day, config):
     features = library_features(frame, reader.report['interval_ms']).loc[keep, ALL_LIBRARY_FEATURES]
     finite = np.isfinite(features.to_numpy(float)).all(axis=1)
     return features.loc[finite].to_numpy(float), y[finite], utc_ns(frame.loc[keep].loc[finite, 'ts_event'])
-
 
 def fit_history(reader, days, config, available_at):
     """两遍训练三组 Ridge，并对有界均匀样本拟合三棵浅树。
@@ -258,7 +247,6 @@ def fit_history(reader, days, config, available_at):
                 value=state.value.reshape(-1).tolist(), n_node_samples=state.n_node_samples.tolist())))
     return models
 
-
 def predict_model(model, features):
     """消费 JSON 模型参数，输出 N 个相对收益预测；树参数不需要 pickle。
 
@@ -281,13 +269,12 @@ def predict_model(model, features):
         active = left[nodes] != -1
     return np.asarray(tree['value'])[nodes]
 
-
 def predict_library(versions, frame, interval_ms):
     """按每行可见时间选择版本，输出 N×K 预测和 N 个版本 ID。
 
     未来版本虽已在离线文件中建好，也不能提前应用。启动前保留 NaN 和 None，
     预热/不足样本仍保留 NaN。候选 ID 在版本间稳定，版本 ID 则绑定实际模型。
-    这是建库预测接口；周界持仓/待成交/选择器状态转移尚未接入执行引擎。
+    真实时间引擎保留原版本持仓/反馈归属，换版时取消未执行的旧意图。
     """
     if not versions:
         raise ValueError('Need scheduled model versions')
@@ -321,40 +308,8 @@ def predict_library(versions, frame, interval_ms):
                 predictions[rows, j] = predict_model(model, features.iloc[rows])
     return predictions, version_ids
 
-
-def prediction_diagnostics(reader, days, versions, reference, config):
-    """仅离线评价精确成熟预测，不做策略/年龄选优，不计算成交或净盈亏。
-
-    未来价格只构造评价 y；预测矩阵首先从当前可见特征和版本产生。固定原
-    11 特征 Ridge 是启动时的对照，此后保持不更新。逐日/全部候选均保存。
-    """
-    output = []
-    for day in days:
-        frame = read_day(reader, day)
-        predictions, version_ids = predict_library(versions, frame, reader.report['interval_ms'])
-        valid = frame.feature_valid.to_numpy()
-        baseline = np.full(len(frame), np.nan)
-        if reference['status'] == 'fitted':
-            baseline[valid] = predict_model(reference, frame.loc[valid, FEATURE_COLUMNS])
-        session = reader.calendar.sessions[day]
-        _, y, keep = training_samples(frame, session['open'], session['close'] + pd.Timedelta(nanoseconds=1),
-            config['prediction_horizon_ms'], config['prediction_horizon_ms'], minimum_samples=0)
-        rows = []
-        candidates = [(m['model_id'], predictions[:, i]) for i, m in enumerate(versions[0]['models'])]
-        candidates.append(('Fixed-Ridge-all', baseline))
-        for name, values in candidates:
-            predicted = np.isfinite(values)
-            finite = np.isfinite(values[keep]); errors = values[keep][finite] - y[finite]
-            rows.append(dict(model_id=name, predicted_rows=int(predicted.sum()), evaluated_rows=int(finite.sum()),
-                rmse_relative_return=float(np.sqrt(np.mean(errors**2))) if len(errors) else None,
-                raw_sign_accuracy=float(np.mean(np.sign(values[keep][finite]) == np.sign(y[finite]))) if len(errors) else None))
-        output.append(dict(session_id=day, observed_rows=len(frame), version_ids=sorted(set(version_ids) - {None}),
-                           candidates=rows))
-    return output
-
-
 def build_library(plan_path):
-    """生成可序列化版本和预测诊断；逐年龄保留，不改已有 IRL/资金结果。"""
+    """生成可序列化周版本和校准参照；逐年龄保留，不读取后段收益。"""
     plan = json.loads(Path(plan_path).read_text(encoding='utf-8'))
     if (plan.get('plan_kind') != 'frozen_weekly_light_library' or plan.get('schema_version') != 1
             or plan.get('plan_sha256') != fingerprint(plan)):
@@ -396,11 +351,8 @@ def build_library(plan_path):
                 if str(error) != 'Not enough purged samples across training sessions':
                     raise
                 reference = dict(name='Ridge_Linear', status='insufficient_samples', error=str(error))
-            # 对照完整保留原 Ridge 训练元数据，额外加适配器字段用于 JSON 预测。
-            baseline = reference | dict(features=FEATURE_COLUMNS, family='Ridge')
-            diagnostics = prediction_diagnostics(reader, config['evaluation_sessions'], versions, baseline, config)
             cases.append(dict(max_age_ms=case['max_age_ms'], versions=versions,
-                              fixed_reference=reference, prediction_diagnostics=diagnostics))
+                              fixed_reference=reference))
             print(f'完成 {case["max_age_ms"]}ms：{len(versions)} 个版本，每版 {len(models)} 个候选', flush=True)
     if library_code_hashes() != plan['code_sha256']:
         raise ValueError('Source changed during build')
@@ -412,33 +364,5 @@ def build_library(plan_path):
                 '启动日可为周中，之后按 trade date 每周首个 session 开盘更新；不模拟训练耗时。',
                 '树使用固定种子的有界均匀抽样，Ridge 使用全量合法历史样本。',
                 '全部日期为开发；未来版本不得提前使用，已结束的旧诊断日可成为后续历史。',
-                '本阶段仅建库与预测诊断，尚未接入时间 IRL、交易收益、周界账户状态或 Algorithm 2/3。'])
+                '建库输出本身不含交易收益；需另行运行课程 OE-UCB 链路。'])
     return result
-
-
-def render_library(result):
-    """报告全部年龄、版本、候选及无样本状态，不挑最佳预测或声称收益。"""
-    lines = ['# 按周轻模型库开发验证', '', f"计划：`{result['plan_sha256']}`；不选择报价年龄或策略。", '',
-             '| 年龄 ms | 生效 session | 可用 UTC 时刻 | 类型 | 历史窗口 | 候选数 |',
-             '| ---: | --- | --- | --- | --- | ---: |']
-    for case in result['age_cases']:
-        for version in case['versions']:
-            lines.append(f"| {case['max_age_ms']} | {version['update_session']} | {version['available_at_utc']} | "
-                         f"{version['update_kind']} | {version['training_sessions']} | {len(version['models'])} |")
-    lines += ['', '## 每个模型的训练覆盖', '', '| 年龄 ms | 版本日期 | 模型 | 状态 | 合法训练行 | 树抽样行 |',
-              '| ---: | --- | --- | --- | ---: | ---: |']
-    for case in result['age_cases']:
-        for version in case['versions']:
-            for model in version['models']:
-                lines.append(f"| {case['max_age_ms']} | {version['update_session']} | {model['model_id']} | "
-                             f"{model['status']} | {model['training_rows']} | {model.get('tree_sample_rows', '不适用')} |")
-    lines += ['', '## 全候选预测诊断', '', 'RMSE 单位为相对收益；不等于 OE、成交净利或实盘表现。', '',
-        '| 年龄 ms | session | 模型 | 预测行 | 精确成熟评价行 | RMSE | 原始符号准确率 |',
-        '| ---: | --- | --- | ---: | ---: | --- | --- |']
-    for case in result['age_cases']:
-        for day in case['prediction_diagnostics']:
-            for row in day['candidates']:
-                lines.append(f"| {case['max_age_ms']} | {day['session_id']} | {row['model_id']} | {row['predicted_rows']} | "
-                             f"{row['evaluated_rows']} | {row['rmse_relative_return']} | {row['raw_sign_accuracy']} |")
-    lines += ['', '## 复现限制', ''] + ['- ' + s for s in result['limits']]
-    return '\n'.join(lines) + '\n'

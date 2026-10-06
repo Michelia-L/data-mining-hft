@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "purpose": "development_library_time_OE_IRL",
-  "session_protocol_file": "esz5_session_development.json",
-  "irl_config_file": "esz5_time_irl_development.json",
-  "model_update_policy": "predeclared_weekly_visible",
-  "session_boundary_policy": "independent_daily_accounts_no_feedback_carry",
-  "notes": "保留现金与原固定 Ridge 门槛 1/2/4，新增每版全部轻模型、统一原门槛。校准只选择稳定候选 ID 和学习奖励权重，模型参数按冻结周调度更新，测试结果不调参。日账户独立，未执行意图/未成熟奖励记录后不跨日传给新版本；未平仓净利汇总未定义。暂不实现论文 UCB/ARS。"
-}

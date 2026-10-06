@@ -1,0 +1,1266 @@
+{
+  "schema_version": 1,
+  "result_kind": "course_view_of_frozen_evidence",
+  "source": {
+    "path": "results/final_report/frozen_ablation_snapshot.json",
+    "sha256": "3765d39e51748a72147e86653d0ca0edfcaf50d3e452a262962bc56fdc1e85b6",
+    "source_commit": "c406441c504cf8612822ed2b0bbb0242b63f2b46",
+    "plan_sha256": "5b3c9b8eaae508462edc7e620572e797895e4cf0a1298722f36bccc475919f7f"
+  },
+  "evaluation_sessions": [
+    "2025-10-22",
+    "2025-10-23",
+    "2025-10-24",
+    "2025-10-27",
+    "2025-10-28",
+    "2025-10-29",
+    "2025-10-30"
+  ],
+  "interval_ms": 500,
+  "currency": "USD",
+  "account_policy": "independent_daily_accounts_no_compounding",
+  "holdout_claim": "none_development_dates",
+  "new_replay_performed": false,
+  "age_cases": [
+    {
+      "max_age_ms": 500,
+      "statistics": [
+        {
+          "strategy": "cash",
+          "label": "现金",
+          "run_status": "executed",
+          "gross_pnl_usd": 0.0,
+          "friction_usd": 0.0,
+          "net_pnl_usd": 0.0,
+          "total_fills": 0,
+          "matured_order_count": 0
+        },
+        {
+          "strategy": "Fixed-Ridge-price-h1",
+          "label": "固定库候选",
+          "run_status": "executed",
+          "gross_pnl_usd": -4043.75,
+          "friction_usd": 29001.25,
+          "net_pnl_usd": -33045.0,
+          "total_fills": 1966,
+          "matured_order_count": 44
+        },
+        {
+          "strategy": "Mean-Ensemble",
+          "label": "均值集成",
+          "run_status": "executed",
+          "gross_pnl_usd": 293.75,
+          "friction_usd": 22498.75,
+          "net_pnl_usd": -22205.0,
+          "total_fills": 1444,
+          "matured_order_count": 4
+        },
+        {
+          "strategy": "OE-equal-UCB",
+          "label": "等权OE-UCB",
+          "run_status": "executed",
+          "gross_pnl_usd": -5575.0,
+          "friction_usd": 89377.5,
+          "net_pnl_usd": -94952.5,
+          "total_fills": 6252,
+          "matured_order_count": 211
+        },
+        {
+          "strategy": "OE-online_library-UCB",
+          "label": "学习权重OE-UCB",
+          "run_status": "blocked",
+          "gross_pnl_usd": null,
+          "friction_usd": null,
+          "net_pnl_usd": null,
+          "total_fills": null,
+          "matured_order_count": null
+        }
+      ],
+      "learned_minus_equal": {
+        "gross_pnl_usd": null,
+        "friction_usd": null,
+        "net_pnl_usd": null
+      },
+      "daily": [
+        {
+          "session_id": "2025-10-22",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 75.0,
+              "friction_usd": 817.5,
+              "net_pnl_usd": -742.5,
+              "total_fills": 54,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 12.5,
+              "friction_usd": 1217.5,
+              "net_pnl_usd": -1205.0,
+              "total_fills": 84,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -2543.75,
+              "friction_usd": 9746.25,
+              "net_pnl_usd": -12290.0,
+              "total_fills": 682,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "blocked",
+              "gross_pnl_usd": null,
+              "friction_usd": null,
+              "net_pnl_usd": null,
+              "total_fills": null,
+              "matured_order_count": null
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-23",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 212.5,
+              "friction_usd": 137.5,
+              "net_pnl_usd": 75.0,
+              "total_fills": 10,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 62.5,
+              "friction_usd": 837.5,
+              "net_pnl_usd": -775.0,
+              "total_fills": 60,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 56.25,
+              "friction_usd": 9373.75,
+              "net_pnl_usd": -9317.5,
+              "total_fills": 674,
+              "matured_order_count": 5
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "blocked",
+              "gross_pnl_usd": null,
+              "friction_usd": null,
+              "net_pnl_usd": null,
+              "total_fills": null,
+              "matured_order_count": null
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-24",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 300.0,
+              "friction_usd": 205.0,
+              "net_pnl_usd": 95.0,
+              "total_fills": 14,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 56.25,
+              "friction_usd": 676.25,
+              "net_pnl_usd": -620.0,
+              "total_fills": 46,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -531.25,
+              "friction_usd": 9376.25,
+              "net_pnl_usd": -9907.5,
+              "total_fills": 676,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "blocked",
+              "gross_pnl_usd": null,
+              "friction_usd": null,
+              "net_pnl_usd": null,
+              "total_fills": null,
+              "matured_order_count": null
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-27",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": -568.75,
+              "friction_usd": 1188.75,
+              "net_pnl_usd": -1757.5,
+              "total_fills": 76,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -525.0,
+              "friction_usd": 902.5,
+              "net_pnl_usd": -1427.5,
+              "total_fills": 52,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -425.0,
+              "friction_usd": 9097.5,
+              "net_pnl_usd": -9522.5,
+              "total_fills": 648,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "blocked",
+              "gross_pnl_usd": null,
+              "friction_usd": null,
+              "net_pnl_usd": null,
+              "total_fills": null,
+              "matured_order_count": null
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-28",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 243.75,
+              "friction_usd": 1351.25,
+              "net_pnl_usd": -1107.5,
+              "total_fills": 96,
+              "matured_order_count": 42
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 306.25,
+              "friction_usd": 238.75,
+              "net_pnl_usd": 67.5,
+              "total_fills": 16,
+              "matured_order_count": 4
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 293.75,
+              "friction_usd": 9498.75,
+              "net_pnl_usd": -9205.0,
+              "total_fills": 684,
+              "matured_order_count": 192
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "blocked",
+              "gross_pnl_usd": null,
+              "friction_usd": null,
+              "net_pnl_usd": null,
+              "total_fills": null,
+              "matured_order_count": null
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-29",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": -5187.5,
+              "friction_usd": 9635.0,
+              "net_pnl_usd": -14822.5,
+              "total_fills": 638,
+              "matured_order_count": 2
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -2762.5,
+              "friction_usd": 7217.5,
+              "net_pnl_usd": -9980.0,
+              "total_fills": 454,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -3143.75,
+              "friction_usd": 16208.75,
+              "net_pnl_usd": -19352.5,
+              "total_fills": 1102,
+              "matured_order_count": 14
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "blocked",
+              "gross_pnl_usd": null,
+              "friction_usd": null,
+              "net_pnl_usd": null,
+              "total_fills": null,
+              "matured_order_count": null
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-30",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 881.25,
+              "friction_usd": 15666.25,
+              "net_pnl_usd": -14785.0,
+              "total_fills": 1078,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 3143.75,
+              "friction_usd": 11408.75,
+              "net_pnl_usd": -8265.0,
+              "total_fills": 732,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 718.75,
+              "friction_usd": 26076.25,
+              "net_pnl_usd": -25357.5,
+              "total_fills": 1786,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "blocked",
+              "gross_pnl_usd": null,
+              "friction_usd": null,
+              "net_pnl_usd": null,
+              "total_fills": null,
+              "matured_order_count": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "max_age_ms": 1000,
+      "statistics": [
+        {
+          "strategy": "cash",
+          "label": "现金",
+          "run_status": "executed",
+          "gross_pnl_usd": 0.0,
+          "friction_usd": 0.0,
+          "net_pnl_usd": 0.0,
+          "total_fills": 0,
+          "matured_order_count": 0
+        },
+        {
+          "strategy": "Fixed-Ridge-price-h1",
+          "label": "固定库候选",
+          "run_status": "executed",
+          "gross_pnl_usd": -2531.25,
+          "friction_usd": 32116.25,
+          "net_pnl_usd": -34647.5,
+          "total_fills": 2168,
+          "matured_order_count": 50
+        },
+        {
+          "strategy": "Mean-Ensemble",
+          "label": "均值集成",
+          "run_status": "executed",
+          "gross_pnl_usd": -3612.5,
+          "friction_usd": 29892.5,
+          "net_pnl_usd": -33505.0,
+          "total_fills": 2044,
+          "matured_order_count": 481
+        },
+        {
+          "strategy": "OE-equal-UCB",
+          "label": "等权OE-UCB",
+          "run_status": "executed",
+          "gross_pnl_usd": -2887.5,
+          "friction_usd": 77097.5,
+          "net_pnl_usd": -79985.0,
+          "total_fills": 5338,
+          "matured_order_count": 547
+        },
+        {
+          "strategy": "OE-online_library-UCB",
+          "label": "学习权重OE-UCB",
+          "run_status": "executed",
+          "gross_pnl_usd": -7012.5,
+          "friction_usd": 67532.5,
+          "net_pnl_usd": -74545.0,
+          "total_fills": 4636,
+          "matured_order_count": 441
+        }
+      ],
+      "learned_minus_equal": {
+        "gross_pnl_usd": -4125.0,
+        "friction_usd": -9565.0,
+        "net_pnl_usd": 5440.0
+      },
+      "daily": [
+        {
+          "session_id": "2025-10-22",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": -550.0,
+              "friction_usd": 642.5,
+              "net_pnl_usd": -1192.5,
+              "total_fills": 44,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -275.0,
+              "friction_usd": 1380.0,
+              "net_pnl_usd": -1655.0,
+              "total_fills": 94,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -662.5,
+              "friction_usd": 8372.5,
+              "net_pnl_usd": -9035.0,
+              "total_fills": 588,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -662.5,
+              "friction_usd": 8372.5,
+              "net_pnl_usd": -9035.0,
+              "total_fills": 588,
+              "matured_order_count": 0
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-23",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 175.0,
+              "friction_usd": 82.5,
+              "net_pnl_usd": 92.5,
+              "total_fills": 6,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 1268.75,
+              "friction_usd": 7718.75,
+              "net_pnl_usd": -6450.0,
+              "total_fills": 560,
+              "matured_order_count": 82
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 318.75,
+              "friction_usd": 16358.75,
+              "net_pnl_usd": -16040.0,
+              "total_fills": 1172,
+              "matured_order_count": 144
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -718.75,
+              "friction_usd": 4603.75,
+              "net_pnl_usd": -5322.5,
+              "total_fills": 318,
+              "matured_order_count": 18
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-24",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 225.0,
+              "friction_usd": 230.0,
+              "net_pnl_usd": -5.0,
+              "total_fills": 14,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 1400.0,
+              "friction_usd": 9455.0,
+              "net_pnl_usd": -8055.0,
+              "total_fills": 684,
+              "matured_order_count": 397
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -25.0,
+              "friction_usd": 6342.5,
+              "net_pnl_usd": -6367.5,
+              "total_fills": 454,
+              "matured_order_count": 164
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -112.5,
+              "friction_usd": 6177.5,
+              "net_pnl_usd": -6290.0,
+              "total_fills": 442,
+              "matured_order_count": 164
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-27",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": -562.5,
+              "friction_usd": 1480.0,
+              "net_pnl_usd": -2042.5,
+              "total_fills": 94,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -637.5,
+              "friction_usd": 667.5,
+              "net_pnl_usd": -1305.0,
+              "total_fills": 34,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 225.0,
+              "friction_usd": 8042.5,
+              "net_pnl_usd": -7817.5,
+              "total_fills": 564,
+              "matured_order_count": 121
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -81.25,
+              "friction_usd": 4818.75,
+              "net_pnl_usd": -4900.0,
+              "total_fills": 330,
+              "matured_order_count": 88
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-28",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 306.25,
+              "friction_usd": 1461.25,
+              "net_pnl_usd": -1155.0,
+              "total_fills": 104,
+              "matured_order_count": 48
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -50.0,
+              "friction_usd": 232.5,
+              "net_pnl_usd": -282.5,
+              "total_fills": 16,
+              "matured_order_count": 2
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -231.25,
+              "friction_usd": 3641.25,
+              "net_pnl_usd": -3872.5,
+              "total_fills": 258,
+              "matured_order_count": 116
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 562.5,
+              "friction_usd": 8667.5,
+              "net_pnl_usd": -8105.0,
+              "total_fills": 624,
+              "matured_order_count": 169
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-29",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": -1543.75,
+              "friction_usd": 9898.75,
+              "net_pnl_usd": -11442.5,
+              "total_fills": 654,
+              "matured_order_count": 2
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -4681.25,
+              "friction_usd": 3976.25,
+              "net_pnl_usd": -8657.5,
+              "total_fills": 256,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -625.0,
+              "friction_usd": 10387.5,
+              "net_pnl_usd": -11012.5,
+              "total_fills": 700,
+              "matured_order_count": 2
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -4112.5,
+              "friction_usd": 10940.0,
+              "net_pnl_usd": -15052.5,
+              "total_fills": 732,
+              "matured_order_count": 2
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-30",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": -581.25,
+              "friction_usd": 18321.25,
+              "net_pnl_usd": -18902.5,
+              "total_fills": 1252,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -637.5,
+              "friction_usd": 6462.5,
+              "net_pnl_usd": -7100.0,
+              "total_fills": 400,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -1887.5,
+              "friction_usd": 23952.5,
+              "net_pnl_usd": -25840.0,
+              "total_fills": 1602,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -1887.5,
+              "friction_usd": 23952.5,
+              "net_pnl_usd": -25840.0,
+              "total_fills": 1602,
+              "matured_order_count": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "max_age_ms": 2000,
+      "statistics": [
+        {
+          "strategy": "cash",
+          "label": "现金",
+          "run_status": "executed",
+          "gross_pnl_usd": 0.0,
+          "friction_usd": 0.0,
+          "net_pnl_usd": 0.0,
+          "total_fills": 0,
+          "matured_order_count": 0
+        },
+        {
+          "strategy": "Fixed-Ridge-price-h1",
+          "label": "固定库候选",
+          "run_status": "executed",
+          "gross_pnl_usd": -237.5,
+          "friction_usd": 62572.5,
+          "net_pnl_usd": -62810.0,
+          "total_fills": 4238,
+          "matured_order_count": 232
+        },
+        {
+          "strategy": "Mean-Ensemble",
+          "label": "均值集成",
+          "run_status": "executed",
+          "gross_pnl_usd": 500.0,
+          "friction_usd": 38620.0,
+          "net_pnl_usd": -38120.0,
+          "total_fills": 2506,
+          "matured_order_count": 28
+        },
+        {
+          "strategy": "OE-equal-UCB",
+          "label": "等权OE-UCB",
+          "run_status": "executed",
+          "gross_pnl_usd": 5537.5,
+          "friction_usd": 109947.5,
+          "net_pnl_usd": -104410.0,
+          "total_fills": 7528,
+          "matured_order_count": 674
+        },
+        {
+          "strategy": "OE-online_library-UCB",
+          "label": "学习权重OE-UCB",
+          "run_status": "executed",
+          "gross_pnl_usd": 3206.25,
+          "friction_usd": 110246.25,
+          "net_pnl_usd": -107040.0,
+          "total_fills": 7552,
+          "matured_order_count": 664
+        }
+      ],
+      "learned_minus_equal": {
+        "gross_pnl_usd": -2331.25,
+        "friction_usd": 298.75,
+        "net_pnl_usd": -2630.0
+      },
+      "daily": [
+        {
+          "session_id": "2025-10-22",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": -1100.0,
+              "friction_usd": 695.0,
+              "net_pnl_usd": -1795.0,
+              "total_fills": 46,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -1156.25,
+              "friction_usd": 936.25,
+              "net_pnl_usd": -2092.5,
+              "total_fills": 64,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 281.25,
+              "friction_usd": 5316.25,
+              "net_pnl_usd": -5035.0,
+              "total_fills": 368,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 281.25,
+              "friction_usd": 5316.25,
+              "net_pnl_usd": -5035.0,
+              "total_fills": 368,
+              "matured_order_count": 0
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-23",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 62.5,
+              "friction_usd": 55.0,
+              "net_pnl_usd": 7.5,
+              "total_fills": 4,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -225.0,
+              "friction_usd": 165.0,
+              "net_pnl_usd": -390.0,
+              "total_fills": 12,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 300.0,
+              "friction_usd": 5772.5,
+              "net_pnl_usd": -5472.5,
+              "total_fills": 408,
+              "matured_order_count": 44
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 300.0,
+              "friction_usd": 5717.5,
+              "net_pnl_usd": -5417.5,
+              "total_fills": 404,
+              "matured_order_count": 44
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-24",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 593.75,
+              "friction_usd": 123.75,
+              "net_pnl_usd": 470.0,
+              "total_fills": 4,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 1362.5,
+              "friction_usd": 305.0,
+              "net_pnl_usd": 1057.5,
+              "total_fills": 14,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -287.5,
+              "friction_usd": 6037.5,
+              "net_pnl_usd": -6325.0,
+              "total_fills": 430,
+              "matured_order_count": 216
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 81.25,
+              "friction_usd": 5921.25,
+              "net_pnl_usd": -5840.0,
+              "total_fills": 422,
+              "matured_order_count": 226
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-27",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 981.25,
+              "friction_usd": 4931.25,
+              "net_pnl_usd": -3950.0,
+              "total_fills": 330,
+              "matured_order_count": 8
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -68.75,
+              "friction_usd": 2378.75,
+              "net_pnl_usd": -2447.5,
+              "total_fills": 148,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -50.0,
+              "friction_usd": 15857.5,
+              "net_pnl_usd": -15907.5,
+              "total_fills": 1096,
+              "matured_order_count": 176
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 15197.5,
+              "net_pnl_usd": -15197.5,
+              "total_fills": 1048,
+              "matured_order_count": 139
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-28",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 31.25,
+              "friction_usd": 4603.75,
+              "net_pnl_usd": -4572.5,
+              "total_fills": 328,
+              "matured_order_count": 166
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 425.0,
+              "friction_usd": 1302.5,
+              "net_pnl_usd": -877.5,
+              "total_fills": 82,
+              "matured_order_count": 12
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -812.5,
+              "friction_usd": 11650.0,
+              "net_pnl_usd": -12462.5,
+              "total_fills": 820,
+              "matured_order_count": 171
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": -975.0,
+              "friction_usd": 12362.5,
+              "net_pnl_usd": -13337.5,
+              "total_fills": 870,
+              "matured_order_count": 188
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-29",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": -1681.25,
+              "friction_usd": 15098.75,
+              "net_pnl_usd": -16780.0,
+              "total_fills": 1014,
+              "matured_order_count": 8
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": -1393.75,
+              "friction_usd": 9396.25,
+              "net_pnl_usd": -10790.0,
+              "total_fills": 612,
+              "matured_order_count": 2
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 4300.0,
+              "friction_usd": 19967.5,
+              "net_pnl_usd": -15667.5,
+              "total_fills": 1354,
+              "matured_order_count": 2
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 1556.25,
+              "friction_usd": 20393.75,
+              "net_pnl_usd": -18837.5,
+              "total_fills": 1390,
+              "matured_order_count": 2
+            }
+          ]
+        },
+        {
+          "session_id": "2025-10-30",
+          "results": [
+            {
+              "strategy": "cash",
+              "run_status": "executed",
+              "gross_pnl_usd": 0.0,
+              "friction_usd": 0.0,
+              "net_pnl_usd": 0.0,
+              "total_fills": 0,
+              "matured_order_count": 0
+            },
+            {
+              "strategy": "Fixed-Ridge-price-h1",
+              "run_status": "executed",
+              "gross_pnl_usd": 875.0,
+              "friction_usd": 37065.0,
+              "net_pnl_usd": -36190.0,
+              "total_fills": 2512,
+              "matured_order_count": 50
+            },
+            {
+              "strategy": "Mean-Ensemble",
+              "run_status": "executed",
+              "gross_pnl_usd": 1556.25,
+              "friction_usd": 24136.25,
+              "net_pnl_usd": -22580.0,
+              "total_fills": 1574,
+              "matured_order_count": 14
+            },
+            {
+              "strategy": "OE-equal-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 1806.25,
+              "friction_usd": 45346.25,
+              "net_pnl_usd": -43540.0,
+              "total_fills": 3052,
+              "matured_order_count": 65
+            },
+            {
+              "strategy": "OE-online_library-UCB",
+              "run_status": "executed",
+              "gross_pnl_usd": 1962.5,
+              "friction_usd": 45337.5,
+              "net_pnl_usd": -43375.0,
+              "total_fills": 3050,
+              "matured_order_count": 65
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "artifact_sha256": {
+    "net_comparison.png": "6c6bd8cd6fcfe22eb4699101557bc9c8ca4157d7a4667c3b3c770f96f9a71b09",
+    "cost_difference.png": "228f0b4bb2e8d9e909595875826345290439c0ce878dacaad7eb9936ecceddb3"
+  }
+}
