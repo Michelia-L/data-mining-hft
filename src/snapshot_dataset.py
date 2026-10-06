@@ -3,7 +3,7 @@
 论文第 3 页 §3.1 的 tick 是定时快照，第 4 页 Eq.(2) 是未来中间价差。
 这里按明确毫秒前瞻期生成离线标签，绝不以“后面第 h 行”代替目标时刻。
 缺一格就断开连续区间，是本项目的保守质量规则；标签和滚动特征均不跨缺口。
-本模块只准备数据，不训练模型，也不修改事件级回测引擎。
+本模块只准备数据；模型训练和交易回放分别读取此产物。
 """
 from datetime import date, datetime, time, timedelta
 import hashlib
@@ -299,7 +299,7 @@ def render_quality_report(report):
     lines = ['# 定时快照数据质量报告', '',
              f"日历：`{report['calendar']['id']}`；间隔：{report['interval_ms']} 毫秒。", '',
              '缺口按当前提供的文件统计；缺少相邻 UTC 分区、前缀预览及采样跳过均可能造成覆盖不足。',
-             '数据准备检查不代表论文复现完成，也不是可用于旧事件级引擎的新回测结果。', '',
+             '本报告描述输入质量；策略收益与方法差异见课程报告。', '',
              '| session | 有效快照 | 计划网格 | 缺失网格 | 特征可用 | 全尺度可学习 | 覆盖完整 |',
              '| --- | ---: | ---: | ---: | ---: | ---: | --- |']
     for row in report['sessions']:
@@ -365,7 +365,8 @@ def prepare_snapshot_dataset(paths, output_dir, *, calendar_path=DEFAULT_CALENDA
                   environment=dict(python=platform.python_version(), pandas=pd.__version__,
                                    numpy=np.__version__, pyarrow=pa.__version__),
                   code_sha256={name: sha256_file(BASE_DIR / name) for name in
-                               ('src/snapshot_dataset.py', 'src/timed_snapshots.py', 'prepare_snapshot_dataset.py')},
+                               ('src/snapshot_dataset.py', 'src/timed_snapshots.py',
+                                'src/data_catalog.py', 'src/course_experiment.py', 'run_project.py')},
                   excluded_outside_trading=0, excluded_preopen_source=0, sessions=[])
     previous = first_seen = instrument = None
     current, chunks, writer = None, [], None

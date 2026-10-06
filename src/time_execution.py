@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from src.config import INITIAL_CAPITAL, INSTRUMENT_CONFIG, QUANTITY
-from src.execution_engine import Account
+from src.account import Account
 from src.model_selector import SingleModelSelector
 from src.period_ucb import PeriodOESelector, PeriodOrderBook
 from src.snapshot_dataset import SessionCalendar, utc_ns
@@ -24,7 +24,7 @@ def timestamp(value):
 class TimeAccount(Account):
     """复用经过验证的美元账本；内部复核时钟为纳秒，输出持仓时间为毫秒。
 
-父类只通过两个时钟相减检查复核期，故可传入纳秒而不修改旧事件实验。
+父类只通过两个时钟相减检查复核期，调用方统一传入纳秒。
 每笔成交及完整交易的输出移除 events/step 字段，以免混淆时间单位。
 """
     def fill(self, clock, side, owner, mid, bid, ask, opening):

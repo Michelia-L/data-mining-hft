@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "purpose": "course_core_OE_UCB_development",
+  "data_index": "data/ESZ5/index.json",
+  "calendar": "config/cme_es_sessions_2025.json",
+  "interval_ms": 500,
+  "protocol": {
+    "schema_version": 1,
+    "purpose": "development_validation",
+    "sessions": {
+      "train": [
+        "2025-10-02",
+        "2025-10-03"
+      ],
+      "calibration": [
+        "2025-10-06",
+        "2025-10-07",
+        "2025-10-08",
+        "2025-10-09",
+        "2025-10-10"
+      ],
+      "validation": [
+        "2025-10-13",
+        "2025-10-14",
+        "2025-10-15",
+        "2025-10-16",
+        "2025-10-17",
+        "2025-10-20",
+        "2025-10-21"
+      ],
+      "test": [
+        "2025-10-22",
+        "2025-10-23",
+        "2025-10-24",
+        "2025-10-27",
+        "2025-10-28",
+        "2025-10-29",
+        "2025-10-30"
+      ]
+    },
+    "prediction_horizon_ms": 5000,
+    "reward_horizons_ms": [
+      5000,
+      15000,
+      45000,
+      135000,
+      405000,
+      1215000,
+      3645000
+    ],
+    "latency_ms": 500,
+    "holding_review_ms": 15000,
+    "threshold": 1.5e-05,
+    "allow_partial": false,
+    "include_degraded": false,
+    "notes": "全部日期为开发；后段沿用校准冻结权重，不追认未触碰测试。"
+  },
+  "library": {
+    "schema_version": 1,
+    "purpose": "development_weekly_light_library",
+    "history_start_session": "2025-10-02",
+    "bootstrap_session": "2025-10-06",
+    "through_session": "2025-10-30",
+    "evaluation_sessions": [
+      "2025-10-06",
+      "2025-10-07",
+      "2025-10-08",
+      "2025-10-09",
+      "2025-10-10",
+      "2025-10-13",
+      "2025-10-14",
+      "2025-10-15",
+      "2025-10-16",
+      "2025-10-17",
+      "2025-10-20",
+      "2025-10-21",
+      "2025-10-22",
+      "2025-10-23",
+      "2025-10-24",
+      "2025-10-27",
+      "2025-10-28",
+      "2025-10-29",
+      "2025-10-30"
+    ],
+    "history_session_counts": [
+      1,
+      2
+    ],
+    "age_candidates_ms": [
+      500,
+      1000,
+      2000
+    ],
+    "prediction_horizon_ms": 5000,
+    "purge_ms": 3645000,
+    "ridge_alpha": 1.0,
+    "tree_max_depth": 4,
+    "tree_min_samples_leaf": 50,
+    "tree_sample_limit": 50000,
+    "seed": 42,
+    "allow_partial": false,
+    "include_degraded": false,
+    "notes": "原短历史与固定超参数；按周使用当时已结束session，三个报价年龄全部保留。"
+  },
+  "selection_period_ms": 300000,
+  "exploration_c_price": 1.0,
+  "fixed_model_id": "Ridge-price-h1",
+  "expert_scope": "online_library",
+  "weight_constraint": "sum_only",
+  "calibration": {
+    "threshold_multipliers": [
+      1,
+      2,
+      4
+    ],
+    "minimum_matured_orders": 1,
+    "solver_tolerance": 1e-08,
+    "tie_tolerance_usd": 1e-09,
+    "tie_tolerance_reward": 1e-09
+  },
+  "notes": "这是新课程入口的可重跑协议；随仓库展示仍读取原冻结快照，未用新代码重新计算收益。"
+}

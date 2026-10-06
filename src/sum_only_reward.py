@@ -3,13 +3,13 @@
 论文物理第4页 Algorithm 1 没有公开生产参数优化器。这里一次枚举完整 P×H
 候选矩阵，代替交替策略搜索；专家自身也在 oracle 中，因此最优间隔不大于0。
 这消除了仅对子集求解、允许任意正负权时可能出现的无界问题。第二阶段在
-相同最优间隔上最小化 L1，仅作可重复消歧，不把上个 PR 的可行性见证当学习。
+相同最优间隔上最小化 L1，仅作可重复消歧，不声称权重被唯一识别。
 """
 import numpy as np
 from scipy.optimize import linprog
 
 from src.irl_reward import IRLRewardLearner
-from src.snapshot_irl import best_with_ties
+from src.calibration import best_with_ties
 
 
 def fit_sum_only(expectations, expert_idx, *, tolerance=1e-8):
@@ -76,8 +76,8 @@ def fit_sum_only(expectations, expert_idx, *, tolerance=1e-8):
 def learn_sum_only(statistics, horizons, config, reference_fit):
     """复用既有校准专家/资格规则，完全不读取验证或测试；保留所有阻断原因。
 
-reference_fit 是同一矩阵的有界拟合，只借用其专家、资格和公共前置检查。
-不继承其权重或可表示性结论：有界不可表示不等于 Eq.(3) 不可表示。
+reference_fit 是 qualify_calibration 返回的专家、资格和前置检查。
+不再运行已退出主线的盒约束拟合；成熟资格、并列顺序和完整矩阵保持原规则。
 """
     keys = ('expert', 'excluded_policies', 'eligible_policy_ids', 'expert_is_cash',
             'profitable_trading_expert', 'equal_weight_selected_policy',
@@ -105,7 +105,7 @@ reference_fit 是同一矩阵的有界拟合，只借用其专家、资格和公
 class FrozenSumOnlyReward(IRLRewardLearner):
     """显式的新奖励类型：原始价格差、不扣成本、允许任意有限正负权且和为1。
 
-不修改旧奖励类或执行器，保持旧模型库源码绑定及原有对照可复核。此对象
+此对象
 只消费已冻结的校准权重；在线交易期间不能重新调用有界权重学习接口。
 """
     def __init__(self, horizons, weights):

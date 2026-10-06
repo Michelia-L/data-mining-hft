@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "purpose": "development_history_OE_ARS",
-  "period_protocol_file": "esz5_multiweek_period_ucb.json",
-  "history_window_ms": 1800000,
-  "alignments": ["recent", "matured"],
-  "tie_tolerance_reward": 1e-9,
-  "notes": "沿用PR #14的30分钟历史窗、严格最近/平移最长前瞻两种工程口径及全部失败状态；每日独立账户，不按后段收益选择窗口。"
-}
