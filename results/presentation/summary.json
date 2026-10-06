@@ -1261,7 +1261,6 @@
   ],
   "artifact_sha256": {
     "net_comparison.png": "6c6bd8cd6fcfe22eb4699101557bc9c8ca4157d7a4667c3b3c770f96f9a71b09",
-    "cost_difference.png": "228f0b4bb2e8d9e909595875826345290439c0ce878dacaad7eb9936ecceddb3",
-    "presentation.pptx": "3a2b065e1ec6d0d5732bb16550e369099aa3235ef3dac25831c982715c394fbb"
+    "cost_difference.png": "228f0b4bb2e8d9e909595875826345290439c0ce878dacaad7eb9936ecceddb3"
   }
 }

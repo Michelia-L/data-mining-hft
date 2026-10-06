@@ -58,6 +58,6 @@
 
 当前信号、交易摩擦、稀疏完整反馈、短历史和替代市场都可能限制结果。本实验没有识别各因素的独立因果贡献；七日且多口径共用行情，也不足以作统计显著性或长期收益推断。现金不交易所以净利为零，阻断表示未执行，收益应是 `null`。
 
-组员用 [讲稿与问答](presentation.md)准备即可。展示摘要与两张课程图由 [冻结快照](results/final_report/frozen_ablation_snapshot.json)提取；另外两批结果、扩展策略和原始图见 [证据目录](results/final_report/README.md)，三份快照与两图按原字节保留。历史源码身份对应原提交，不更新成当前代码哈希。
+组员根据本报告的方法、主表和配图制作 PPT 与讲稿，并计时排练。展示摘要与两张课程图由 [冻结快照](results/final_report/frozen_ablation_snapshot.json)提取；另外两批结果、扩展策略和原始图见 [证据目录](results/final_report/README.md)，三份快照与两图按原字节保留。历史源码身份对应原提交，不更新成当前代码哈希。
 
-`python -S scripts/check_project.py`核对身份、金额、加总、引用及幻灯片结构；`python run_project.py check --core`加做小合成的未来扰动、完整期间成熟和账本检查。这些检查支持指定性质，不证明盈利、原行情真实性或原论文等价复现。新入口重跑另存新身份，当前报告始终描述既有证据。
+`python -S scripts/check_project.py`核对身份、金额、加总、图表及文档引用；`python run_project.py check --core`加做小合成的未来扰动、完整期间成熟和账本检查。这些检查支持指定性质，不证明盈利、原行情真实性或原论文等价复现。新入口重跑另存新身份，当前报告始终描述既有证据。

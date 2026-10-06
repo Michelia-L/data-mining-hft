@@ -1,12 +1,11 @@
-"""从固定历史证据生成课程摘要、两张图与可编辑PPT，不重新计算行情收益。
+"""从固定历史证据生成课程摘要与两张结果图，不重新计算行情收益。
 
 只读 frozen_ablation_snapshot 的预声明五项与三个报价年龄；不作选优。
-幻灯片文字和备注从 presentation.md 读取，金额从快照读取，减少手工抄错。
+金额直接从快照读取；组员可以据此制作各自的展示材料。
 """
 import hashlib
 import json
 from pathlib import Path
-import re
 
 SOURCE = 'results/final_report/frozen_ablation_snapshot.json'
 STRATEGIES = ('cash', 'Fixed-Ridge-price-h1', 'Mean-Ensemble', 'OE-equal-UCB', 'OE-online_library-UCB')
@@ -46,21 +45,6 @@ def show_summary(summary):
         values = [c['statistics'][i]['net_pnl_usd'] for c in summary['age_cases']]
         print(label+'\t'+'\t'.join('阻断' if v is None else f'{v:.2f}' for v in values))
     print('所有执行的非现金策略累计亏损；三个口径均保留。默认未读取行情或重新训练。')
-
-
-def read_slides(path):
-    """解析课程稿中11个编号区块，保留每页三条要点、备注和讲述秒数。"""
-    text = Path(path).read_text(encoding='utf-8')
-    blocks = re.findall(r'<!-- slide:(\d+) seconds:(\d+) -->\s*## ([^\n]+)\n(.*?)(?=<!-- slide:|\n## 教师问答)', text, re.S)
-    slides = []
-    for number, seconds, title, body in blocks:
-        points, notes = body.split('讲稿：', 1)
-        slides.append(dict(number=int(number), seconds=int(seconds), title=title,
-                           bullets=re.findall(r'^- (.+)$', points, re.M), notes=notes.strip()))
-    if ([s['number'] for s in slides] != list(range(1,12))
-            or sum(s['seconds'] for s in slides) != 560 or any(len(s['bullets']) != 3 for s in slides)):
-        raise ValueError('Need 8 main + 3 backup slides, three points each and 560 seconds')
-    return slides
 
 
 def draw_figures(summary, directory):
@@ -116,80 +100,14 @@ def draw_figures(summary, directory):
     fig.tight_layout(); fig.savefig(directory / 'cost_difference.png',dpi=180); plt.close(fig)
 
 
-def make_deck(slides, directory, target):
-    """16:9课程稿；文本/流程图可编辑，图表用标准绘图，逐页讲稿写入备注。"""
-    from pptx import Presentation
-    from pptx.dml.color import RGBColor
-    from pptx.enum.shapes import MSO_SHAPE
-    from pptx.util import Inches, Pt
-    prs=Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
-    navy='17324D'; teal='176E73'; grey='647586'; pale='EDF3F5'; orange='D98A48'
-    def box(slide,text,x,y,w,h,size=23,color=navy,bold=False,fill=None):
-        shape=(slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
-               if fill else slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h)))
-        if fill:
-            shape.fill.solid(); shape.fill.fore_color.rgb=RGBColor.from_string(fill); shape.line.fill.background()
-        tf=shape.text_frame; tf.word_wrap=True
-        tf.margin_left=tf.margin_right=Inches(0 if w<=.5 else .12)
-        tf.margin_top=Inches(.1)
-        for i,line in enumerate(text.split('\n')):
-            p=tf.paragraphs[0] if i==0 else tf.add_paragraph(); p.text=line
-            p.font.name='Microsoft YaHei'; p.font.size=Pt(size); p.font.bold=bold
-            p.font.color.rgb=RGBColor.from_string(color); p.space_after=Pt(4)
-        return shape
-    elapsed=0
-    for spec in slides:
-        n=spec['number']; slide=prs.slides.add_slide(prs.slide_layouts[6])
-        box(slide,'FMATO  /  课程部分复现',.65,.20,10,.35,size=12,color=teal,bold=True)
-        box(slide,spec['title'],.65,.65,12,.8,size=32,bold=True)
-        end=elapsed+spec['seconds']; clock=f'{elapsed//60}:{elapsed%60:02d}—{end//60}:{end%60:02d}' if n<=8 else '提问时使用'
-        box(slide,f'{n:02d}  /  {clock}',.65,7.02,12,.3,size=11,color=grey)
-        slide.notes_slide.notes_text_frame.text=spec['notes']
-        if n<=8: elapsed=end
-        if n==6:
-            box(slide,spec['bullets'][0],.7,1.5,12,.55,size=22,color=teal,bold=True)
-            slide.shapes.add_picture(str(directory / 'net_comparison.png'), Inches(1.42), Inches(1.95), width=Inches(10.5))
-            box(slide,'\n'.join(spec['bullets'][1:]),.8,6.04,12,.9,size=18)
-        elif n==7:
-            box(slide,spec['bullets'][0],.7,1.5,12,.55,size=24,color=teal,bold=True)
-            slide.shapes.add_picture(str(directory / 'cost_difference.png'), Inches(.7), Inches(2.35), width=Inches(8.0))
-            box(slide,'1000ms口径\n毛利更差4125\n摩擦减少9565\n→ 少亏5440美元',9,2.45,3.5,2.3,size=22,fill=pale)
-            box(slide,'反馈稀疏、短历史\n替代市场与执行假设\n少亏不等于预测更准确',9,5.0,3.5,1.4,size=18,color=grey)
-        else:
-            for i,point in enumerate(spec['bullets']):
-                box(slide,point,.8,1.7+i*.78,11.8,.7,size=23 if n<9 else 20)
-            if n==2:
-                for i,label in enumerate(('线性 / 浅树','三类特征','1 / 2日历史')):
-                    box(slide,label,1+i*4,4.55,3.65,.8,size=24,fill=pale,bold=True)
-                box(slide,'2 × 3 × 2 ＝ 12个候选；按周更新',1,5.7,11.2,.7,size=27,color=teal,bold=True)
-            elif n==3:
-                for i,label in enumerate(('真实时间盘口','轻模型库','UCB选模型','延迟成交','美元账本')):
-                    box(slide,label,.8+i*2.5,4.45,2.2,.85,size=19,fill=pale,bold=True)
-                    if i<4: box(slide,'→',3.01+i*2.5,4.60,.3,.5,size=20,color=teal)
-                box(slide,'历史校准 → 冻结权重；成交 → 完整成熟评分 → 更新UCB',.9,5.9,11.7,.9,size=22,color=teal)
-            elif n==4:
-                box(slide,'成交 t → 5秒 → 15秒 → … → 3645秒',1,4.6,11.2,.8,size=30,color=teal,bold=True,fill=pale)
-                box(slide,'完整奖励成熟  ＋  期间结束  ＋  全部订单可评价',1,5.75,11.2,.7,size=24,bold=True)
-            elif n==5:
-                box(slide,'固定网格500ms\n报价年龄500 / 1000 / 2000ms',.9,4.6,5.6,1.3,size=22,fill=pale)
-                box(slide,'1张ES；点值50美元\n点差 + 滑点 + 单边手续费',6.8,4.6,5.6,1.3,size=22,fill=pale)
-            elif n==8:
-                box(slide,'核心机制可以解释，收益优势尚未得到支持。',.9,5.05,11.5,1.0,size=28,color=teal,bold=True,fill=pale)
-            elif n==1:
-                box(slide,'一个研究问题，一条方法链路，一份如实的结果。',.9,5.2,11.4,.8,size=27,color=teal,bold=True,fill=pale)
-    prs.save(target)
-
-
 def export_course(root, output_directory):
-    """只向新目录导出；源码证据与已提交PPT不被原地覆盖。"""
+    """只向新目录导出摘要与两图；原有证据与本地参考材料保持原字节。"""
     root=Path(root); output=Path(output_directory).resolve()
     if output.exists():
         raise FileExistsError(f'Refusing to overwrite export directory: {output}')
-    summary=build_summary(root); slides=read_slides(root / 'presentation.md')
+    summary=build_summary(root)
     output.mkdir(parents=True)
-    (output / 'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2,allow_nan=False)+'\n')
     draw_figures(summary,output)
-    make_deck(slides,output,output / 'presentation.pptx')
     summary['artifact_sha256'] = {name: hashlib.sha256((output/name).read_bytes()).hexdigest()
-        for name in ('net_comparison.png','cost_difference.png','presentation.pptx')}
+        for name in ('net_comparison.png','cost_difference.png')}
     (output / 'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2,allow_nan=False)+'\n')

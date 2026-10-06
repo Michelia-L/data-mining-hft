@@ -9,13 +9,13 @@ ROOT = Path(__file__).resolve().parent
 
 
 def main(argv=None):
-    """结果查看/核对只依赖标准库；数值与幻灯片依赖在对应命令中加载。"""
+    """结果查看/核对只依赖标准库；数值与绘图依赖在对应命令中加载。"""
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command')
     sub.add_parser('show', help='查看七日课程结果，不读取行情或重新训练')
     check = sub.add_parser('check', help='核对结果、文档与证据身份')
     check.add_argument('--core', action='store_true', help='另做小合成时序/账本检查')
-    export = sub.add_parser('export', help='从冻结快照导出摘要、图表和可编辑PPT')
+    export = sub.add_parser('export', help='从冻结快照导出摘要与两张结果图')
     export.add_argument('--output-dir', required=True, help='不存在的新输出目录')
     for command in ('prepare', 'run'):
         p = sub.add_parser(command, help='准备协议所需新数据' if command=='prepare' else '重跑核心OE-UCB；另存新结果')

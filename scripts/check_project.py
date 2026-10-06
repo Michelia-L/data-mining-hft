@@ -11,8 +11,6 @@ import math
 from pathlib import Path
 import re
 import sys
-import xml.etree.ElementTree as ET
-from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parent.parent
 PINS = {
@@ -40,7 +38,7 @@ def digest(path):
 
 
 def check_delivery():
-    """独立核对15格金额、全部27项日加总、当前阅读链接与11页PPT备注。"""
+    """独立核对15格金额、全部27项日加总、当前阅读链接与两张课程图。"""
     evidence = ROOT / 'results/final_report'
     for path, sha in PINS.items():
         require(digest(evidence/path)==sha, f'历史证据身份改变：{path}')
@@ -83,28 +81,18 @@ def check_delivery():
         values=[c['statistics'][i]['net_pnl_usd'] for c in summary['age_cases']]
         expected='| '+label+' | '+' | '.join('阻断' if v is None else f'{v:.2f}' for v in values)+' |'
         require(expected in report,'课程报告主表与证据不符：'+label)
-    for doc in ('README.md','presentation.md','final_replication_report.md','results/final_report/README.md'):
+    for doc in ('README.md','final_replication_report.md','results/final_report/README.md'):
         text=(ROOT/doc).read_text()
         for link in re.findall(r'\[[^\]]*\]\(([^)]+)\)',text):
             if not link.startswith(('https:','http:','#')):
                 require((ROOT/doc).parent.joinpath(link.split('#')[0]).exists(),f'失效链接：{doc}/{link}')
-    # 幻灯片从同一稿生成，核对备注、主/备页结构和嵌入的图像身份。
-    from src.course_delivery import read_slides
-    slides=read_slides(ROOT/'presentation.md')
-    ns={'a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
-    with ZipFile(ROOT/'presentation.pptx') as deck:
-        require(len([n for n in deck.namelist() if re.fullmatch(r'ppt/slides/slide\d+\.xml',n)])==11,'PPT页数应为11')
-        for spec in slides:
-            notes=ET.fromstring(deck.read(f'ppt/notesSlides/notesSlide{spec["number"]}.xml'))
-            texts=''.join(n.text or '' for n in notes.findall('.//a:t',ns))
-            require(spec['notes'] in texts,'PPT备注与讲稿不一致')
-        media={hashlib.sha256(deck.read(n)).hexdigest() for n in deck.namelist() if n.startswith('ppt/media/')}
-        for name in ('net_comparison.png','cost_difference.png'):
-            require(digest(ROOT/'results/presentation'/name) in media,'PPT图像与课程图不一致')
+    # 公开产物只有结果图；核对不读取本地参考PPT和讲稿，新克隆也能运行。
+    require(set(summary['artifact_sha256'])=={'net_comparison.png','cost_difference.png'},
+            '课程图表清单应只包含两张公开结果图')
     for name,sha in summary['artifact_sha256'].items():
-        path=ROOT/name if name=='presentation.pptx' else ROOT/'results/presentation'/name
+        path=ROOT/'results/presentation'/name
         require(digest(path)==sha,'课程导出产物身份改变：'+name)
-    print('通过：三份原快照/两图、15格主表、全部27项日加总、文档链接、11页PPT及备注。')
+    print('通过：三份原快照/两图、15格主表、全部27项日加总、文档链接与两张课程图。')
 
 
 def check_core():
