@@ -56,3 +56,9 @@ python run_project.py run --prepared-dir /tmp/course-inputs --output-dir /tmp/co
 ```
 
 默认查看和导出均使用既有证据，不能称为新代码重跑收益。唯一协议是 [course_experiment.json](config/course_experiment.json)；源码位于 `src/`。历史三份快照与两张图在 [证据目录](results/final_report/README.md)按原字节保留，其中也包含 ME、ARS、不利结果与失败状态，不属于组员的默认阅读任务。删减前版本可通过提交 [0338afc](https://github.com/Michelia-L/data-mining-hft/tree/0338afc2e8a67ee22285d05d41e4d78373329859)追溯。
+
+## 论文的不足与我们的增量改进
+
+我们仅增加一项方法改进：在原多尺度OE奖励中，扣除该次实际成交的点差、滑点和手续费，并换算成价格点。独立增量实验共用原校准权重、模型库、UCB和执行条件；原实验主表与结论保留。方法和实验协议见 [费用内化奖励报告](friction_reward_report.md)。维护者通过 `python run_project.py run-friction --prepared-dir /tmp/friction-inputs --output-dir /tmp/friction-run` 生成独立的新结果，输入准备沿用 `prepare`。
+
+已完成独立新回放：后段七日的1000/2000ms口径分别少亏10655/7840美元，前段1000ms反而多亏492.50美元；全部执行组仍亏损，500ms继续阻断。新增证据保留在 [独立增量结果](results/friction_reward/summary.json)，不能据此声称稳定盈利。

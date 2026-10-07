@@ -81,7 +81,7 @@ def check_delivery():
         values=[c['statistics'][i]['net_pnl_usd'] for c in summary['age_cases']]
         expected='| '+label+' | '+' | '.join('阻断' if v is None else f'{v:.2f}' for v in values)+' |'
         require(expected in report,'课程报告主表与证据不符：'+label)
-    for doc in ('README.md','final_replication_report.md','results/final_report/README.md'):
+    for doc in ('README.md','final_replication_report.md','results/final_report/README.md','friction_reward_report.md'):
         text=(ROOT/doc).read_text()
         for link in re.findall(r'\[[^\]]*\]\(([^)]+)\)',text):
             if not link.startswith(('https:','http:','#')):
@@ -93,6 +93,9 @@ def check_delivery():
         path=ROOT/'results/presentation'/name
         require(digest(path)==sha,'课程导出产物身份改变：'+name)
     print('通过：三份原快照/两图、15格主表、全部27项日加总、文档链接与两张课程图。')
+    if (ROOT/'results/friction_reward/summary.json').exists():
+        from scripts.check_friction_reward import check_friction_snapshot
+        check_friction_snapshot(ROOT,require)
 
 
 def check_core():
@@ -168,6 +171,8 @@ def check_core():
         gate=execution_gate(fit,policies)
         require(gate==group['execution_gates']['sum_only'],'库内执行门控改变')
     print('通过：未来扰动、完整期间成熟/缺单门控、美元账本、三个年龄历史校准拟合与执行门控。')
+    from scripts.check_friction_reward import check_friction_reward
+    check_friction_reward(require)
 
 
 def main():

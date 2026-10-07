@@ -18,6 +18,7 @@ from src.calibration import (blocked_result, execution_gate, policy_specs,
     pooled_policy_statistics, qualify_calibration, replay_candidates)
 from src.config import BASE_DIR, INSTRUMENT_CONFIG
 from src.data_catalog import select_daily_source
+from src.friction_reward import FRICTION_EXPERIMENT, FrozenFrictionOEReward
 from src.model_selector import EnsembleSelector, FlatSelector, SingleModelSelector
 from src.period_ucb import PeriodOESelector
 from src.session_experiment import (code_hashes, fingerprint, freeze_protocol,
@@ -110,11 +111,14 @@ def prepare_course(config_path, directory):
     return binding
 
 
-def replay_course_day(reader, day, library_case, config, fit, gate, *, detail=False):
-    """五个账户共享 N×12 当时可见预测、执行条件与完整库可用性掩码。
+def replay_course_day(reader, day, library_case, config, fit, gate, *, detail=False,
+                      friction_experiment=False):
+    """原五项或显式增量对照共享 N×12 当时预测、执行条件与完整库可用性。
 
     固定候选身份提前声明，参数仍按周更新。学习奖励只取历史校准；阻断
     保留 None。每笔成交等全部尺度成熟，整期间所有订单完整才更新 UCB。
+    friction_experiment=True 只对照原学习OE与扣实际单边摩擦的学习OE；
+    两者使用同一份原始OE校准权重和资格门控，不再校准或增加其他方法。
     """
     frame = read_day(reader, day)
     matrix, versions = predict_library(library_case['versions'], frame, reader.report['interval_ms'])
@@ -124,12 +128,15 @@ def replay_course_day(reader, day, library_case, config, fit, gate, *, detail=Fa
     quotes['feature_valid'] &= np.isfinite(matrix).all(axis=1)
     horizons = config['protocol']['reward_horizons_ms']
     results = []
-    for name in STRATEGIES:
-        if name == STRATEGIES[-1] and not gate['usable_for_execution']:
+    strategies = (FRICTION_EXPERIMENT['control'], FRICTION_EXPERIMENT['treatment']) if friction_experiment else STRATEGIES
+    for name in strategies:
+        calibrated = name in (STRATEGIES[-1], FRICTION_EXPERIMENT['treatment'])
+        if calibrated and not gate['usable_for_execution']:
             results.append(blocked_result(name, gate))
             continue
-        weights = fit['weights'] if name == STRATEGIES[-1] else [1/len(horizons)] * len(horizons)
-        reward = FrozenSumOnlyReward(horizons, weights)
+        weights = fit['weights'] if calibrated else [1/len(horizons)] * len(horizons)
+        reward_class = FrozenFrictionOEReward if name == FRICTION_EXPERIMENT['treatment'] else FrozenSumOnlyReward
+        reward = reward_class(horizons, weights)
         if name == 'cash':
             selector = FlatSelector(name, models)
         elif name == STRATEGIES[1]:
@@ -146,18 +153,22 @@ def replay_course_day(reader, day, library_case, config, fit, gate, *, detail=Fa
             threshold=protocol['threshold'], force_replay_end=False)
         row = engine.run_backtest(selector, quotes, matrix, detail=detail, model_version_ids=versions)
         row.update(run_status='executed', reward_source='frozen_calibration_sum_only'
-                   if name == STRATEGIES[-1] else 'declared_equal_weights')
+                   if calibrated else 'declared_equal_weights')
         results.append(row)
     return dict(session_id=day, results=results)
 
 
-def run_course(config_path, prepared_directory, output_directory):
+def run_course(config_path, prepared_directory, output_directory, *, friction_experiment=False):
     """冻结当前源码/输入后运行校准和评价；逐日保存，完成后再发布总结果。
 
     所有日期已用于开发，权重冻结不等于未触碰测试。新课程代码没有重跑
     ME/ARS、专家来源或约束搜索；历史27项完整结果留在原快照。
+    显式增量模式在单独输出目录生成新回放，两臂只在奖励扣费项上有差异。
     """
     config, calendar = load_config(config_path)
+    if type(friction_experiment) is not bool:
+        raise ValueError('Incremental experiment selection must be boolean')
+    strategies = (FRICTION_EXPERIMENT['control'], FRICTION_EXPERIMENT['treatment']) if friction_experiment else STRATEGIES
     inputs = json.loads((Path(prepared_directory) / 'inputs.json').read_text())
     if inputs['config_sha256'] != sha256_file(config_path):
         raise ValueError('Prepared data and course configuration differ')
@@ -175,6 +186,12 @@ def run_course(config_path, prepared_directory, output_directory):
         cases=bindings, data_index_sha256=inputs['data_index_sha256'],
         library_sha256=sha256_file(output / 'library.json'), code_sha256=code_hashes(),
         account_policy='independent_daily_accounts_no_compounding', holdout_claim='none_development_dates')
+    if friction_experiment:
+        # 在任何评价收益产生前冻结单项扩展；仍只在历史原始 OE 上校准一次。
+        execution_plan['incremental_experiment'] = FRICTION_EXPERIMENT.copy()
+        execution_plan['prepared_input_manifest'] = dict(
+            sha256=sha256_file(Path(prepared_directory)/'inputs.json'),
+            preparation_cache=inputs.get('preparation_cache'))
     execution_plan['plan_sha256'] = fingerprint(execution_plan)
     (output / 'execution_plan.json').write_text(json.dumps(execution_plan, ensure_ascii=False, indent=2))
     cases = []
@@ -201,12 +218,14 @@ def run_course(config_path, prepared_directory, output_directory):
             for phase in ('validation', 'test'):
                 rows = []
                 for day in config['protocol']['sessions'][phase]:
-                    row = replay_course_day(reader, day, library_case, config, fit, gate)
+                    row = replay_course_day(reader, day, library_case, config, fit, gate,
+                                            friction_experiment=friction_experiment)
                     publish_bundle(row, '# 新课程独立日结果\n', output / f'age-{age}' / day, 'day.json')
                     rows.append(row)
-                    print(f'已保存 {age}ms / {day} 五项状态', flush=True)
-                totals = [blocked_result(name, gate) if name==STRATEGIES[-1] and not gate['usable_for_execution']
-                          else summarize_days(rows, name) | dict(run_status='executed') for name in STRATEGIES]
+                    print(f'已保存 {age}ms / {day} {len(strategies)}项状态', flush=True)
+                totals = [blocked_result(name, gate) if name in (STRATEGIES[-1], FRICTION_EXPERIMENT['treatment'])
+                          and not gate['usable_for_execution'] else summarize_days(rows, name) | dict(run_status='executed')
+                          for name in strategies]
                 phases[phase] = dict(daily=rows, statistics=totals)
             cases.append(dict(max_age_ms=age, calibration=dict(daily=daily, audits=audits, statistics=stats),
                               reward_fit=fit, execution_gate=gate, phases=phases))
@@ -214,7 +233,11 @@ def run_course(config_path, prepared_directory, output_directory):
             or sha256_file(config_path) != execution_plan['config_sha256']
             or sha256_file(output / 'library.json') != execution_plan['library_sha256']):
         raise ValueError('Source, configuration or model library changed during replay')
-    return dict(schema_version=1, result_kind='course_core_OE_UCB_development', plan=execution_plan,
+    packages = ('numpy','pandas','pyarrow','scikit-learn','scipy','threadpoolctl')
+    if friction_experiment:
+        packages += ('matplotlib',)  # 新增实验同时导出独立图，记录实际绘图库版本。
+    return dict(schema_version=1, result_kind='course_friction_reward_increment' if friction_experiment
+                else 'course_core_OE_UCB_development', plan=execution_plan,
         plan_sha256=execution_plan['plan_sha256'], age_cases=cases, selected_age_ms=None,
         instrument=INSTRUMENT_CONFIG['CME_ES'], environment=dict(python=platform.python_version(),
-        **{n: importlib.metadata.version(n) for n in ('numpy','pandas','pyarrow','scikit-learn','scipy','threadpoolctl')}))
+        **{n: importlib.metadata.version(n) for n in packages}))

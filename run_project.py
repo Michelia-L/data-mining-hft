@@ -17,11 +17,14 @@ def main(argv=None):
     check.add_argument('--core', action='store_true', help='另做小合成时序/账本检查')
     export = sub.add_parser('export', help='从冻结快照导出摘要与两张结果图')
     export.add_argument('--output-dir', required=True, help='不存在的新输出目录')
-    for command in ('prepare', 'run'):
-        p = sub.add_parser(command, help='准备协议所需新数据' if command=='prepare' else '重跑核心OE-UCB；另存新结果')
+    for command in ('prepare', 'run', 'run-friction'):
+        help_text = ('准备协议所需新数据' if command=='prepare' else
+                     '增量实验：原OE与内化实际摩擦的OE共用冻结权重' if command=='run-friction' else
+                     '重跑核心OE-UCB；另存新结果')
+        p = sub.add_parser(command, help=help_text)
         p.add_argument('--config', default=str(ROOT / 'config/course_experiment.json'))
         p.add_argument('--output-dir', required=True, help='不存在的新输出目录')
-        if command=='run':
+        if command in ('run', 'run-friction'):
             p.add_argument('--prepared-dir', required=True)
     args = parser.parse_args(argv)
     try:
@@ -42,9 +45,13 @@ def main(argv=None):
             if args.command == 'prepare':
                 prepare_course(args.config, args.output_dir)
             else:
-                result = run_course(args.config, args.prepared_dir, args.output_dir)
+                result = run_course(args.config, args.prepared_dir, args.output_dir,
+                                    friction_experiment=args.command == 'run-friction')
                 (Path(args.output_dir) / 'result.json').write_text(
                     json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)+'\n')
+                if args.command == 'run-friction':
+                    from src.friction_delivery import export_friction_result
+                    export_friction_result(result,args.output_dir)
                 print(f'新结果已保存：{Path(args.output_dir).resolve()}')
     except (ValueError, OSError, KeyError, TypeError) as error:
         parser.error(str(error))
