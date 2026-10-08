@@ -58,12 +58,13 @@ def result_digest(result):
         separators=(',', ':')).encode()).hexdigest()
 
 
-def check_friction_snapshot(root, require):
+def check_friction_snapshot(root, require, *, directory=None):
     """标准库核对增量证据与表格；不要求原始行情，不重算或替换历史收益。"""
     from pathlib import Path
     import gzip
-    directory = Path(root)/'results/friction_reward'
-    summary = json.loads((directory/'summary.json').read_text())
+    from src.friction_artifacts import check_friction_bundle
+    directory = Path(directory) if directory is not None else Path(root)/'results/friction_reward'
+    summary = check_friction_bundle(directory)
     archive = directory/summary['source']['archive_path']
     compressed = archive.read_bytes(); raw_bytes = gzip.decompress(compressed)
     require(hashlib.sha256(compressed).hexdigest()==summary['source']['archive_sha256']

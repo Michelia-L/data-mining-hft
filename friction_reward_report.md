@@ -54,11 +54,22 @@ R_{\mathrm{friction}}(O)=R_{\mathrm{OE}}(O)-c_O,
 ```bash
 python run_project.py prepare --output-dir /tmp/friction-inputs
 python run_project.py run-friction --prepared-dir /tmp/friction-inputs --output-dir /tmp/friction-run
+python run_project.py check --friction-output-dir /tmp/friction-run
 python -S scripts/check_project.py
 python run_project.py check --core
 ```
 
-每个输出目录必须尚不存在。新计划记录单项处理定义、原配置、源码、输入/日历/模型库哈希、随机种子及实际数值库版本。两臂的原始价格特征与美元交易账本分开记录；新增奖励另提供完整成熟订单的原评分、成本和扣费评分审计。
+每个输出目录必须尚不存在。`run-friction`直接生成两份原字节压缩证据、相对路径和哈希；完整包检查通过后才发布摘要、图和报告，无需手工补字段。新计划记录单项处理定义、原配置、源码、输入/日历/模型库哈希、随机种子及实际数值库版本。两臂的原始价格特征与美元交易账本分开记录；新增奖励另提供完整成熟订单的原评分、成本和扣费评分审计。
+
+对已经使用缓存准备的回放，可通过同一入口全量核对，再重新导出完整包：
+
+```bash
+python run_project.py verify-friction-inputs --prepared-dir /path/to/cached-inputs --output-dir /tmp/friction-reference --workers 4
+python run_project.py export-friction --result-dir /path/to/friction-run --output-dir /tmp/friction-publication --input-equivalence /tmp/friction-reference/input_equivalence.json
+python run_project.py check --friction-output-dir /tmp/friction-publication
+```
+
+核对直接对每个UTC分区/年龄独立调用原`write_timed_snapshots`，再调用原`prepare_snapshot_dataset`，与公开`prepare`使用相同函数。并行仅处理相互独立的源分区，不改采样或特征算法。它逐批比较全部行、列、顺序、来源元数据和派生特征/标签；Parquet行组不同可使文件字节哈希不同，因此不以字节哈希差异代替数值比较。缓存发布必须提供绑定原冻结输入的全量报告；前缀检查不能替代它。
 
 核心检查覆盖：原版完整回放回归、美元到价格点换算、负权下只扣一次成本、固定决策下账本一致、零费用时两方法等价、七尺度成熟/坏标签门控、未来扰动不改变过去，以及费用能改变模型选择。合成样本仅验证这些性质，不作为盈利证据。
 
@@ -82,7 +93,7 @@ python run_project.py check --core
 | 1000ms | -74545.00 | -63890.00 | 10655.00 | 4725.00 | -5930.00 | -434 |
 | 2000ms | -107040.00 | -99200.00 | 7840.00 | 475.00 | -7365.00 | -522 |
 
-![费用内化奖励的两阶段净利对照](results/friction_reward/net_comparison.png)
+![费用内化奖励的两阶段净利对照](results/friction_reward/publication_v2/net_comparison.png)
 
 后段两个可执行口径均少亏：1000ms改善10655美元，由毛利增加4725美元和摩擦减少5930美元共同构成；2000ms改善7840美元，由毛利增加475美元和摩擦减少7365美元构成。**所有执行策略仍累计亏损，前段1000ms还多亏492.50美元**。因此本实验支持“在部分开发窗口减少摩擦和亏损”，尚不支持稳定盈利或预测更准确。
 
@@ -92,8 +103,12 @@ python run_project.py check --core
 
 ### 新证据与实际验证
 
-独立证据包含 [两阶段逐日摘要](results/friction_reward/summary.json)、[完整新回放压缩快照](results/friction_reward/experiment_snapshot.json.gz)、[共用冻结模型库](results/friction_reward/model_library.json.gz)和上图。快照解压后与实际`result.json`原字节一致，保留校准、期间反馈、选择记录、失败状态和新源码身份；模型库解压哈希与计划一致。计划哈希为`f35367e167097df50f3fb690bd79c29148e2c877262e92546aa883a1f056c0bb`；模型采样种子为42，Python实际版本为3.12.14，全部依赖版本见摘要。
+独立证据包含 [两阶段逐日摘要](results/friction_reward/publication_v2/summary.json)、[完整新回放压缩快照](results/friction_reward/publication_v2/experiment_snapshot.json.gz)、[共用冻结模型库](results/friction_reward/publication_v2/model_library.json.gz)、[全量输入等价性报告](results/friction_reward/publication_v2/input_equivalence.json)和上图。快照解压后与实际`result.json`原字节一致，保留校准、期间反馈、选择记录、失败状态和回放时源码身份；模型库解压哈希与计划一致。计划哈希为`f35367e167097df50f3fb690bd79c29148e2c877262e92546aa883a1f056c0bb`；模型采样种子为42，Python实际版本为3.12.14，全部依赖版本见摘要。
 
-本次数据准备复用原采样器的同源2000ms快照，按`age_ms`生成较严口径；先对10万条原始消息验证三个年龄与独立采样的全部字段和元数据一致，正式输入仍全量处理各源文件。准备启动脚本和原采样源码的哈希保留在输入清单及新计划，常规复跑可直接使用原`prepare`入口。
+初版数据准备复用原采样器的同源2000ms快照，按`age_ms`生成较严口径，仅先验证10万条消息的前缀。本次复现审查已补上**26个UTC分区×3年龄的78组独立全量原采样**和三个最终prepared的全部字段/特征/标签核对，均一致；每组确认读取全部源消息，报告记录两路径文件哈希、行数、比较范围、输入清单与源码身份。准备启动脚本的原哈希继续保留，不将旧前缀记录改写成全量验证。
 
-实际运行了`run_project.py run-friction`、标准库结果检查和`run_project.py check --core`。另外核对了新增完整回放的期间订单守恒、七尺度成熟时序、成本与期间评分守恒；本次原OE对照的后段逐日毛利、摩擦、净利、成交数和成熟订单数与旧快照一致。原三份快照、两张历史图和原课程摘要/图未替换；这些检查支持所核对的性质，不证明稳定收益或原论文等价复现。
+500/1000/2000ms的最终prepared分别为2897712/3281749/3505005行，逐列比较通过且三个最终Parquet文件的字节哈希也分别相同。26个源分区共220882254条消息，每个年龄均独立完整读取。
+
+本次使用`export-friction`在新目录`publication_v2`自动补齐归档和全量证明，初版增量包按原字节保留。因实际输入全量一致，不再重训或重算收益；冻结回放和模型的原字节及源码身份保留，导出版本单独记录在摘要`publication`中。公开重跑会产生自己的新计划身份，不能把重新导出称作新的模型回放。
+
+实际运行了初版`run_project.py run-friction`、本次全量`verify-friction-inputs`、正式`export-friction`、独立发布包检查、标准库结果检查和`run_project.py check --core`。核心检查另包含小数据公开`prepare→run-friction→check`流程：真实建库/校准/成交，自动归档，输入核对绑定，以及末行差异、篡改和覆盖拒绝；合成短参数只验证流程，不作为收益证据。另外核对了完整回放的期间订单守恒、七尺度成熟时序、成本与期间评分守恒；原OE对照的后段逐日财务与计数继续与旧快照一致。原三份快照、两张历史图和原课程摘要/图未替换；这些检查不证明稳定收益或原论文等价复现。

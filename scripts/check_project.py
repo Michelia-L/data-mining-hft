@@ -96,6 +96,13 @@ def check_delivery():
     if (ROOT/'results/friction_reward/summary.json').exists():
         from scripts.check_friction_reward import check_friction_snapshot
         check_friction_snapshot(ROOT,require)
+        publication = ROOT/'results/friction_reward/publication_v2'
+        if publication.exists():
+            current = json.loads((publication/'summary.json').read_text())
+            require(current['publication']['format_version']==2
+                    and 'input_equivalence_path' in current['source'],
+                    '正式新发布包必须包含绑定的全量输入核对')
+            check_friction_snapshot(ROOT,require,directory=publication)
 
 
 def check_core():
@@ -173,6 +180,8 @@ def check_core():
     print('通过：未来扰动、完整期间成熟/缺单门控、美元账本、三个年龄历史校准拟合与执行门控。')
     from scripts.check_friction_reward import check_friction_reward
     check_friction_reward(require)
+    from scripts.check_friction_pipeline import check_friction_pipeline
+    check_friction_pipeline(ROOT,require)
 
 
 def main():

@@ -61,4 +61,6 @@ python run_project.py run --prepared-dir /tmp/course-inputs --output-dir /tmp/co
 
 我们仅增加一项方法改进：在原多尺度OE奖励中，扣除该次实际成交的点差、滑点和手续费，并换算成价格点。独立增量实验共用原校准权重、模型库、UCB和执行条件；原实验主表与结论保留。方法和实验协议见 [费用内化奖励报告](friction_reward_report.md)。维护者通过 `python run_project.py run-friction --prepared-dir /tmp/friction-inputs --output-dir /tmp/friction-run` 生成独立的新结果，输入准备沿用 `prepare`。
 
-已完成独立新回放：后段七日的1000/2000ms口径分别少亏10655/7840美元，前段1000ms反而多亏492.50美元；全部执行组仍亏损，500ms继续阻断。新增证据保留在 [独立增量结果](results/friction_reward/summary.json)，不能据此声称稳定盈利。
+已完成独立新回放：后段七日的1000/2000ms口径分别少亏10655/7840美元，前段1000ms反而多亏492.50美元；全部执行组仍亏损，500ms继续阻断。新增证据保留在 [完整增量发布包](results/friction_reward/publication_v2/summary.json)，不能据此声称稳定盈利。
+
+正式入口自动生成回放/模型压缩包与相对路径、哈希，并在发布前检查完整包。复现审查补充了26个UTC分区×3个年龄的全量原采样及全部派生输入核对；本次仅补齐发布和验证，收益与冻结回放身份保留。公开核对和重新导出命令见费用内化奖励报告。
