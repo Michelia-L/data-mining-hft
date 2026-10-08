@@ -68,14 +68,17 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                 or tuple(sorted(set(horizons))) != horizons
                 or horizons[-1] > 7 * 86400000):
             raise ValueError('Positive millisecond settings and increasing grid-aligned horizons required')
-        if reward.definition != 'paper_price_difference' or reward.deduct_cost:
-            raise ValueError('Time baseline requires price-difference reward without cost deduction')
+        cost_adjusted = (reward.definition == 'friction_adjusted_order_price_difference'
+                         and reward.deduct_cost is True)
+        if not cost_adjusted and (reward.definition != 'paper_price_difference' or reward.deduct_cost):
+            raise ValueError('Need original price-difference OE or explicit actual-fill-friction OE')
         self.config = INSTRUMENT_CONFIG['CME_ES']
         self.threshold = self.config['trade_threshold'] if threshold is None else threshold
         if (not np.isfinite([initial_capital, quantity, self.threshold]).all()
                 or initial_capital <= 0 or quantity <= 0 or self.threshold < 0):
             raise ValueError('Invalid account or threshold settings')
         self.reward, self.calendar = reward, calendar or SessionCalendar()
+        self.cost_adjusted_reward = cost_adjusted
         if type(force_replay_end) is not bool:
             raise ValueError('force_replay_end must be boolean')
         # 小窗口保留旧期末退出假设；完整 session 协议禁用，避免缺尾时回溯强平。
@@ -98,6 +101,8 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
 不能因换版消失，旧反馈不能改标为新版本。静态选择器仍不按反馈换候选。
 """
         periodic = isinstance(selector, PeriodOESelector)
+        if self.cost_adjusted_reward and selector.reward_type != 'OE':
+            raise ValueError('Actual fill friction reward applies to OE only')
         if not isinstance(selector, (SingleModelSelector, PeriodOESelector)) or selector.needs_shadow:
             raise ValueError('Time replay supports static or explicit period OE selectors only')
         if selector.action_history or selector.reward_history:
@@ -153,6 +158,8 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
         observations, decisions = [], []
         gross_values, net_values = [], []
         matured_orders = 0
+        friction_audit = dict(raw_reward_sum_price=0., cost_sum_price=0.,
+                             cost_sum_usd=0., adjusted_reward_sum_price=0.)
         position_version = None
         version_audit = {}
 
@@ -182,19 +189,27 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                     status = 'matured'
                 statuses[kind][status] += 1
                 audit_version(item.get('model_version_id'), kind + '_' + status)
+                values = (self.reward.features_from_prices(mid[origin], mid[safe], item['side'])
+                          if status == 'matured' else None)
+                # 成本在真实成交时已经冻结。未来价格仍只在完整七尺度成熟时可读；
+                # 单边费用只在最终标量中减一次，不改变原始 OE 特征或美元账本。
+                score = (self.reward.score(values, cost_price=item['cost_price'])
+                         if status == 'matured' and self.cost_adjusted_reward else
+                         self.reward.score(values) if status == 'matured' else None)
                 if periodic and kind == 'OE':
                     # 单笔回调仅解决桶中一单；缺格也必须解决，不能从分母删除。
-                    score = (self.reward.score(self.reward.features_from_prices(mid[origin], mid[safe], item['side']))
-                             if status == 'matured' else None)
                     periods.resolve(item['period_key'], status, score)
                 if status != 'matured':
                     continue
-                values = self.reward.features_from_prices(mid[origin], mid[safe], item['side'])
                 if kind == 'OE':
                     feature_sum[:] += values
                     matured_orders += 1
+                    if self.cost_adjusted_reward:
+                        friction_audit['raw_reward_sum_price'] += float(np.dot(self.reward.weights, values))
+                        friction_audit['cost_sum_price'] += item['cost_price']
+                        friction_audit['cost_sum_usd'] += item['cost_usd']
+                        friction_audit['adjusted_reward_sum_price'] += score
                 if selector.reward_type == kind:
-                    score = self.reward.score(values)
                     # 固定基线只记录反馈；传入从回放起点开始的毫秒，而不是行号。
                     if not periodic:
                         selector.observe(item['owner'], score, int((times[now] - times[0]) // 1_000_000))
@@ -206,6 +221,10 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                             observations[-1]['model_version_id'] = item['model_version_id']
                         if periodic:
                             observations[-1]['updates_selector'] = False
+                        if self.cost_adjusted_reward:
+                            observations[-1].update(raw_reward=float(np.dot(self.reward.weights, values)),
+                                cost_usd=item['cost_usd'], cost_price=item['cost_price'],
+                                period_index=item['period_key'][2] if periodic else None)
 
         for row, clock in enumerate(times):
             terminal = row == n - 1 and self.force_replay_end
@@ -248,6 +267,13 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
             for fill in fills:
                 fill['execution_reason'] = reason or 'delayed_intent'
                 order = dict(row=row, side=fill['side'], owner=fill['owner'])
+                if self.cost_adjusted_reward:
+                    # 开仓/退出都来自 Account.fill 的实际单边成本；退出归原仓位模型。
+                    # 这里只提供评分输入，不再次修改 account.costs 或交易净收益。
+                    order['cost_usd'] = fill['cost_usd']
+                    order['cost_price'] = self.reward.cost_in_price_points(
+                        fill['cost_usd'], self.config['multiplier'], self.quantity)
+                    fill['reward_cost_price'] = order['cost_price']
                 if versions is not None:
                     # 退出账本和 OE 沿用原开仓身份；触发退出的新信号身份另列。
                     fill['model_version_id'] = intent_version if fill['opening'] else position_version
@@ -267,11 +293,11 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                     fill['reward_period_index'] = order['period_key'][2]
                 orders.append(order)
             mature(orders, row, 'OE')
-            if not periodic:
-                mature(signals, row, 'ME')
-            else:
+            if periodic:
                 # 顺序为实际成交 → 完整到期标签 → 已结束期间 → 本 tick 新选择。
                 periods.advance(int(clock))
+            elif not self.cost_adjusted_reward:
+                mature(signals, row, 'ME')
             gross = account.gross_equity_change(mid[row])
             gross_values.append(gross)
             net_values.append(gross - account.costs)
@@ -288,7 +314,7 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                 if versions is not None:
                     signal['model_version_id'] = intent['model_version_id'] = versions[row]
                     audit_version(versions[row], 'decisions')
-                if not periodic:
+                if not periodic and not self.cost_adjusted_reward:
                     signals.append(signal)
                 intents.append(intent)
                 if detail:
@@ -316,7 +342,8 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
             order_feature_expectation=(feature_sum / matured_orders if matured_orders else feature_sum).tolist(),
             reward_horizon_unit='milliseconds', reward_horizons_ms=self.reward.horizons,
             reward_definition=self.reward.definition, reward_weights=self.reward.weights.tolist(),
-            reward_cost_mode='PaperOE-no-cost', reward_status={k: dict(v) for k, v in statuses.items()},
+            reward_cost_mode='FillOE-actual-single-side-friction' if self.cost_adjusted_reward else 'PaperOE-no-cost',
+            reward_status={k: dict(v) for k, v in statuses.items()},
             observed_rewards=len(selector.reward_history), reward_type=selector.reward_type,
             unmatured_fill_rewards_at_end=len(orders), risk_exits=dict(exits),
             cancelled_intents=dict(cancelled), unexecuted_intents_at_end=len(intents),
@@ -328,6 +355,14 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
             selector_protocol='static_baseline',
             force_replay_end=self.force_replay_end,
             execution_assumption='Aggressive one-contract quote simulation; no queue, impact or margin model.')
+        if self.cost_adjusted_reward:
+            result['reward_status'].pop('ME')  # 实际成交摩擦扩展只评价 OE。
+            result['friction_reward_audit'] = friction_audit | dict(
+                matured_fills=matured_orders, scope='complete_matured_fills_only',
+                coefficient=1., reward_unit='price_points', account_costs_deducted_again=False,
+                raw_reward_mean_price=friction_audit['raw_reward_sum_price']/matured_orders if matured_orders else None,
+                cost_mean_price=friction_audit['cost_sum_price']/matured_orders if matured_orders else None,
+                adjusted_reward_mean_price=friction_audit['adjusted_reward_sum_price']/matured_orders if matured_orders else None)
         if periodic:
             period_results = periods.finish(int(times[-1]))
             result.update(selector_protocol='fixed_period_OE_' + selector.mode,
@@ -337,7 +372,7 @@ force_replay_end=True 保留短窗口实验的末行平仓；完整 session 协�
                 selector_version_statistics=selector.summary(),
                 period_assumptions='session_open_wall_clock_hold_choice_complete_orders_equal_period_W_version_separated',
                 model_switch_policy='keep_position_original_owner_and_due_intents_until_execution_or_version_change')
-            result['reward_status'].pop('ME')  # 本协议没有模型预测 ME 队列，不声称实现 ME 学习。
+            result['reward_status'].pop('ME', None)  # 本协议没有模型预测 ME 队列，不声称实现 ME 学习。
         if detail:
             result.update(fills=account.fills, trades=account.trades, decisions=decisions,
                           reward_observations=observations, equity_usd=equity[1:].tolist())
